@@ -1,0 +1,238 @@
+"""
+ProjectBuilder - 工程构建器 Skill
+使用 Claude Code Skill 工具创建完整的项目工程结构
+"""
+import re
+import os
+from typing import Optional
+from pathlib import Path
+
+
+class ProjectBuilder:
+    """工程构建器 - 创建完整的项目结构"""
+
+    def __init__(self, output_dir: str = "output"):
+        self.output_dir = Path(output_dir)
+
+    def generate_project_name(self, task_description: str) -> str:
+        """从任务描述生成项目名称（snake_case）"""
+        # 移除常见动词和形容词
+        stop_words = {
+            '实现', '创建', '开发', '编写', '设计', '构建', '制作',
+            '一个', '个', '的', '简单', '基本', '基础', '完整',
+            '用', '使用', '实现一个', '做一个', '开发一个',
+            'please', 'create', 'implement', 'build', 'make', 'develop',
+            'a', 'an', 'the', 'simple', 'basic'
+        }
+
+        # 提取中英文关键词
+        chinese_words = re.findall(r'[一-鿿]+', task_description)
+        english_words = re.findall(r'[a-zA-Z]+', task_description.lower())
+
+        keywords = []
+
+        # 处理中文词
+        for word in chinese_words:
+            if word not in stop_words and len(word) > 1:
+                keywords.append(word)
+
+        # 处理英文词
+        for word in english_words:
+            if word not in stop_words and len(word) > 1:
+                keywords.append(word)
+
+        if not keywords:
+            # 默认名称
+            return "project"
+
+        # 取前3个关键词组成项目名，转为 snake_case
+        project_name = '_'.join(keywords[:3])
+        project_name = re.sub(r'[\s-]+', '_', project_name)
+        return project_name
+
+    def create_project_structure(self, project_name: str) -> Path:
+        """创建项目目录结构"""
+        project_dir = self.output_dir / project_name
+        tests_dir = project_dir / "tests"
+
+        # 创建目录
+        project_dir.mkdir(parents=True, exist_ok=True)
+        tests_dir.mkdir(parents=True, exist_ok=True)
+
+        return project_dir
+
+    def save_code_files(self, project_dir: Path, files: dict) -> list:
+        """保存多个代码文件"""
+        saved = []
+        for filename, content in files.items():
+            filepath = project_dir / filename
+
+            # 确保父目录存在
+            filepath.parent.mkdir(parents=True, exist_ok=True)
+
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(content)
+            saved.append(str(filepath))
+
+        return saved
+
+    def generate_readme(self, project_name: str, description: str) -> str:
+        """生成 README.md"""
+        display_name = project_name.replace('_', ' ').title()
+        return f"""# {display_name}
+
+{description}
+
+## 项目结构
+
+```
+{project_name}/
+├── *.py           # 源代码
+└── tests/         # 测试文件
+```
+
+## 安装
+
+```bash
+pip install -r requirements.txt
+```
+
+## 使用方法
+
+```python
+# 导入并使用
+```
+
+## 测试
+
+```bash
+pytest tests/
+```
+
+## 许可证
+
+MIT
+"""
+
+    def generate_requirements(self, dependencies: list = None) -> str:
+        """生成 requirements.txt"""
+        base_deps = ["pytest>=7.0.0"]
+        if dependencies:
+            base_deps.extend(dependencies)
+        return '\n'.join(base_deps) + '\n'
+
+    def generate_init(self, project_name: str) -> str:
+        """生成 __init__.py"""
+        display_name = project_name.replace('_', ' ').title()
+        return f'''"""
+{project_name} - {display_name}
+"""
+__version__ = "0.1.0"
+'''
+
+    def generate_test_template(self, module_name: str) -> str:
+        """生成测试文件模板"""
+        return f'''"""
+{module_name} 测试模块
+"""
+import pytest
+from {module_name} import *
+
+
+class Test{module_name.title().replace('_', '')}:
+    """测试类"""
+
+    def test_example(self):
+        """示例测试"""
+        assert True
+'''
+
+    def parse_multi_file_code(self, code_content: str) -> dict:
+        """解析多文件代码内容
+
+        期望格式:
+        # FILE: filename.py
+        content
+
+        # FILE: another.py
+        content
+        """
+        files = {}
+        current_file = None
+        current_content = []
+
+        for line in code_content.split('\n'):
+            if line.startswith('# FILE:'):
+                # 保存上一个文件
+                if current_file:
+                    files[current_file] = '\n'.join(current_content).strip()
+
+                # 开始新文件
+                current_file = line[7:].strip()
+                current_content = []
+            elif current_file:
+                current_content.append(line)
+
+        # 保存最后一个文件
+        if current_file:
+            files[current_file] = '\n'.join(current_content).strip()
+
+        return files
+
+    def build_project(self, project_name: str, task_description: str,
+                      code_content: str, test_content: str = None) -> dict:
+        """构建完整项目
+
+        Args:
+            project_name: 项目名称
+            task_description: 任务描述
+            code_content: 主代码内容
+            test_content: 测试代码内容
+
+        Returns:
+            dict: 构建结果，包含保存的文件列表
+        """
+        # 创建目录结构
+        project_dir = self.create_project_structure(project_name)
+
+        # 解析代码文件
+        files = self.parse_multi_file_code(code_content)
+
+        # 如果只有一个文件且没有明确结构
+        if not files:
+            # 使用项目名作为主文件名
+            main_file = f"{project_name}.py"
+            files[main_file] = code_content.strip()
+
+        # 保存所有代码文件
+        saved_files = self.save_code_files(project_dir, files)
+
+        # 生成并保存 __init__.py
+        init_content = self.generate_init(project_name)
+        self.save_code_files(project_dir, {'__init__.py': init_content})
+
+        # 生成并保存测试文件
+        if test_content:
+            test_file = f"tests/test_{project_name}.py"
+            self.save_code_files(project_dir, {test_file: test_content})
+        else:
+            # 生成测试模板
+            module_name = project_name
+            test_file = f"tests/test_{project_name}.py"
+            test_template = self.generate_test_template(module_name)
+            self.save_code_files(project_dir, {test_file: test_template})
+
+        # 生成 README.md
+        readme = self.generate_readme(project_name, task_description)
+        self.save_code_files(project_dir, {'README.md': readme})
+
+        # 生成 requirements.txt
+        requirements = self.generate_requirements()
+        self.save_code_files(project_dir, {'requirements.txt': requirements})
+
+        return {
+            "success": True,
+            "project_dir": str(project_dir),
+            "files": saved_files,
+            "summary": f"项目 {project_name} 已创建，共 {len(files)} 个代码文件"
+        }

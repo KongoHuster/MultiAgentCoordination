@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>多Agent协作系统</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- 头部 -->
+        <header class="app-header">
+            <div class="header-left">
+                <span class="app-icon">🤖</span>
+                <h1 class="app-title">多Agent协作系统</h1>
+            </div>
+            <div class="header-right">
+                <span class="status-indicator" id="statusIndicator">
+                    <span class="status-dot"></span>
+                    <span class="status-text">就绪</span>
+                </span>
+            </div>
+        </header>
+
+        <!-- 主要内容区 -->
+        <main class="main-content">
+            <!-- 聊天区域 -->
+            <div class="chat-section">
+                <div class="chat-container" id="chatContainer">
+                    <!-- 欢迎消息 -->
+                    <div class="welcome-message">
+                        <div class="welcome-icon">🎯</div>
+                        <h2>欢迎使用多Agent协作系统</h2>
+                        <p>输入您的任务描述，AI Agent团队将协助您完成开发工作</p>
+                    </div>
+                </div>
+
+                <!-- 输入区域 -->
+                <div class="input-area">
+                    <div class="input-container">
+                        <textarea
+                            id="taskInput"
+                            class="task-input"
+                            placeholder="描述您想要完成的任务，例如：创建一个待办事项管理应用..."
+                            rows="1"
+                        ></textarea>
+                        <button class="send-button" id="sendButton">
+                            <svg class="send-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="input-hint">
+                        按 <kbd>Enter</kbd> 发送，<kbd>Shift</kbd>+<kbd>Enter</kbd> 换行
+                    </div>
+                </div>
+            </div>
+
+            <!-- 侧边栏 -->
+            <aside class="sidebar" id="sidebar">
+                <div class="sidebar-header">
+                    <h3>任务进度</h3>
+                </div>
+                <div class="task-list" id="taskList">
+                    <div class="task-item task-empty">
+                        <span class="task-icon">📋</span>
+                        <span class="task-text">暂无任务</span>
+                    </div>
+                </div>
+                <div class="sidebar-stats">
+                    <div class="stat-item">
+                        <span class="stat-label">Agent状态</span>
+                        <span class="stat-value" id="agentStatus">等待中</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">通过率</span>
+                        <span class="stat-value" id="passRate">--</span>
+                    </div>
+                </div>
+            </aside>
+        </main>
+    </div>
+
+    <!-- 加载动画 -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-spinner">
+            <div class="spinner"></div>
+            <span class="loading-text">Agent 工作中...</span>
+        </div>
+    </div>
+
+    <!-- 通知容器 -->
+    <div class="notification-container" id="notificationContainer"></div>
+
+    <script src="app.js"></script>
+</body>
+</html>
