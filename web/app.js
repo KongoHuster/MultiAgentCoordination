@@ -29,6 +29,8 @@ const elements = {
     agentStatus: document.getElementById('agentStatus'),
     passRate: document.getElementById('passRate'),
     notificationContainer: document.getElementById('notificationContainer'),
+    pauseButton: document.getElementById('pauseButton'),
+    resumeButton: document.getElementById('resumeButton'),
 };
 
 // ===================================
@@ -252,10 +254,11 @@ function addMessage(message) {
     // 处理流式更新 - 追加到上一个消息
     if (message.type === 'stream_update') {
         const lastMessage = elements.chatContainer.lastElementChild;
-        if (lastMessage && lastMessage.classList.contains('streaming')) {
+        if (lastMessage && (lastMessage.classList.contains('streaming') || lastMessage.dataset.agent === 'coder' || lastMessage.dataset.agent === 'reviewer' || lastMessage.dataset.agent === 'tester')) {
             const body = lastMessage.querySelector('.message-body');
             if (body && message.data && message.data.content) {
-                body.innerHTML = formatMessageBody({ message: message.data.content });
+                // 直接显示完整内容，包含代码格式
+                body.innerHTML = `<pre><code>${escapeHtml(message.data.content)}</code></pre>`;
                 scrollToBottom();
                 return;
             }
@@ -289,7 +292,21 @@ function addMessage(message) {
         updateStatus('completed');
         state.isRunning = false;
         elements.sendButton.disabled = false;
+        elements.pauseButton.style.display = 'none';
+        elements.resumeButton.style.display = 'none';
         showNotification('工作流执行完成！', 'success');
+    }
+
+    if (message.type === 'workflow_paused') {
+        elements.pauseButton.style.display = 'none';
+        elements.resumeButton.style.display = 'inline-flex';
+        showNotification('任务已暂停', 'info');
+    }
+
+    if (message.type === 'workflow_resumed') {
+        elements.pauseButton.style.display = 'inline-flex';
+        elements.resumeButton.style.display = 'none';
+        showNotification('任务已恢复', 'success');
     }
 
     if (message.type === 'error') {
@@ -431,6 +448,8 @@ async function sendTask() {
     state.agentStatus = 'running';
     updateStatus('running');
     elements.sendButton.disabled = true;
+    elements.pauseButton.style.display = 'inline-flex';
+    elements.resumeButton.style.display = 'none';
 
     // 添加用户消息
     addMessage({
@@ -487,6 +506,34 @@ async function sendTask() {
 // ===================================
 
 elements.sendButton.addEventListener('click', sendTask);
+
+// 暂停按钮
+elements.pauseButton.addEventListener('click', async () => {
+    try {
+        const response = await fetch('/api/pause', { method: 'POST' });
+        const result = await response.json();
+        if (result.status === 'paused') {
+            elements.pauseButton.style.display = 'none';
+            elements.resumeButton.style.display = 'inline-flex';
+        }
+    } catch (error) {
+        showNotification('暂停失败', 'error');
+    }
+});
+
+// 继续按钮
+elements.resumeButton.addEventListener('click', async () => {
+    try {
+        const response = await fetch('/api/resume', { method: 'POST' });
+        const result = await response.json();
+        if (result.status === 'resumed') {
+            elements.pauseButton.style.display = 'inline-flex';
+            elements.resumeButton.style.display = 'none';
+        }
+    } catch (error) {
+        showNotification('恢复失败', 'error');
+    }
+});
 
 elements.taskInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {

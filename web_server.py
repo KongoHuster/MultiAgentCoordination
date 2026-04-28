@@ -27,7 +27,9 @@ class AppState:
         self.workflow_engine = None
         self.messages = []
         self.is_running = False
+        self.is_paused = False
         self.lock = threading.Lock()
+        self.workflow_thread = None
 
 state = AppState()
 
@@ -146,6 +148,38 @@ def clear_messages():
     state.messages = []
     return jsonify({'status': 'ok'})
 
+@app.route('/api/pause', methods=['POST'])
+def pause_workflow():
+    """暂停工作流"""
+    if state.is_running:
+        state.is_paused = True
+        state.messages.append({
+            'type': 'workflow_paused',
+            'agent': 'system',
+            'agentName': '系统',
+            'agentIcon': '⏸️',
+            'agentColor': '#6b7280',
+            'data': {'message': '任务已暂停'}
+        })
+        return jsonify({'status': 'paused'})
+    return jsonify({'error': '没有正在运行的任务'}), 400
+
+@app.route('/api/resume', methods=['POST'])
+def resume_workflow():
+    """恢复工作流"""
+    if state.is_paused:
+        state.is_paused = False
+        state.messages.append({
+            'type': 'workflow_resumed',
+            'agent': 'system',
+            'agentName': '系统',
+            'agentIcon': '▶️',
+            'agentColor': '#6b7280',
+            'data': {'message': '任务已恢复'}
+        })
+        return jsonify({'status': 'resumed'})
+    return jsonify({'error': '任务未暂停'}), 400
+
 
 class MessageCollector(UIEventEmitter):
     """消息收集器 - 替代UI事件发射器收集消息"""
@@ -160,8 +194,10 @@ class MessageCollector(UIEventEmitter):
                 if state.messages:
                     last_msg = state.messages[-1]
                     if last_msg.get('type') in ['coding_start', 'review_start', 'test_start']:
-                        last_msg['data']['content'] = data.get('content', '')
-                        last_msg['data']['message'] = data.get('content', '')[:500] + ('...' if len(data.get('content', '')) > 500 else '')
+                        # 更新消息内容，保留完整内容
+                        content = data.get('content', '')
+                        last_msg['data']['content'] = content
+                        last_msg['data']['message'] = content
                         return
             state.messages.append(message)
         print(f"[{agent}] {data.get('message', '')[:100]}...")

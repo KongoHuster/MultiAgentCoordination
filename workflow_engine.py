@@ -57,15 +57,21 @@ class WorkflowEngine:
 
     def _stream_callback(self, text: str):
         """流式回调 - 实时发送内容到前端"""
+        # 检查是否暂停
+        from web_server import state as app_state
+        if app_state.is_paused:
+            while app_state.is_paused:
+                import time
+                time.sleep(0.5)
+
         self.stream_content += text
-        # 定期发送增量更新（比如每50个字符或遇到换行）
-        if len(self.stream_content) > 100 or '\n' in text:
+        # 立即发送增量更新
+        if text.strip():  # 有实际内容就发送
             self.ui.emit("stream_update", {
                 "stream_id": self.current_stream_id,
                 "content": self.stream_content,
                 "delta": text
             }, agent=self.stream_agent or "system")
-            self.stream_content = ""
 
     def _start_stream(self, stream_id: str, agent: str):
         """开始流式消息"""
@@ -75,12 +81,6 @@ class WorkflowEngine:
 
     def _end_stream(self):
         """结束流式消息"""
-        if self.stream_content:
-            self.ui.emit("stream_update", {
-                "stream_id": self.current_stream_id,
-                "content": self.stream_content,
-                "delta": ""
-            }, agent=self.stream_agent or "system")
         self.current_stream_id = None
         self.stream_agent = None
         self.stream_content = ""
