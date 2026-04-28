@@ -9,40 +9,27 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
-def start_gui():
-    """启动GUI应用"""
-    try:
-        import webview
-    except ImportError:
-        print("错误: pywebview 未安装")
-        print("请运行: pip install pywebview")
-        return
+class JavaScriptAPI:
+    """JavaScript API 类 - 用于与前端通信"""
 
-    from ui_bridge import get_ui_emitter, EventTypes
-    from workflow_engine import WorkflowEngine
-    from config import get_config
+    def __init__(self):
+        self.workflow_engine = None
 
-    # 设置HTML路径
-    web_dir = os.path.join(os.path.dirname(__file__), 'web')
-    index_path = os.path.join(web_dir, 'index.html')
-
-    # 工作流引擎引用
-    workflow_engine = None
-
-    def start_workflow(task_description: str):
+    def start_workflow(self, task_description: str):
         """启动工作流"""
         import threading
+        from ui_bridge import get_ui_emitter, EventTypes
+        from workflow_engine import WorkflowEngine
+        from config import get_config
 
         def run_workflow():
-            global workflow_engine
-            ui = get_ui_emitter()
-
             try:
                 config = get_config()
-                workflow_engine = WorkflowEngine(config.anthropic_api_key)
-                result = workflow_engine.run(task_description)
+                self.workflow_engine = WorkflowEngine(config.anthropic_api_key)
+                result = self.workflow_engine.run(task_description)
                 return result
             except Exception as e:
+                ui = get_ui_emitter()
                 ui.emit(EventTypes.ERROR, {
                     "message": f"工作流执行出错: {str(e)}"
                 }, agent="system")
@@ -52,33 +39,49 @@ def start_gui():
         thread.start()
         return {"status": "started"}
 
-    def get_status():
+    def get_status(self):
         """获取当前状态"""
         return {
-            "status": "running" if workflow_engine else "idle",
+            "status": "running" if self.workflow_engine else "idle",
             "ready": True
         }
+
+
+def start_gui():
+    """启动GUI应用"""
+    try:
+        import webview
+    except ImportError:
+        print("错误: pywebview 未安装")
+        print("请运行: pip install pywebview")
+        return
+
+    from ui_bridge import get_ui_emitter
+
+    # 设置HTML路径
+    web_dir = os.path.join(os.path.dirname(__file__), 'web')
+    index_path = os.path.join(web_dir, 'index.html')
 
     # 使用绝对路径
     import urllib.parse
     file_url = 'file://' + urllib.parse.quote(os.path.abspath(index_path))
 
-    # 创建窗口
+    # 创建 JavaScript API 实例
+    js_api = JavaScriptAPI()
+
+    # 创建窗口，传递 js_api
     window = webview.create_window(
         "多Agent协作系统",
         file_url,
         width=1100,
         height=800,
         resizable=True,
-        min_size=(800, 600)
+        min_size=(800, 600),
+        js_api=js_api
     )
 
     # 设置事件发射器窗口引用
     get_ui_emitter().set_window(window)
-
-    # 暴露函数给JavaScript
-    webview.expose(start_workflow)
-    webview.expose(get_status)
 
     print("启动多Agent协作系统 GUI...")
     print(f"界面文件: {index_path}")

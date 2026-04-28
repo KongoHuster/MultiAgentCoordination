@@ -52,17 +52,17 @@ class CoderAgent(BaseAgent):
             base_url=base_url
         )
 
-    def execute(self, task: str, context: dict = None) -> AgentResponse:
+    def execute(self, task: str, context: dict = None, stream_callback=None) -> AgentResponse:
         """执行编码任务"""
         messages = self.format_prompt(task, context)
-        return self._call_api_with_tools(messages, [])
+        return self._call_api_with_tools(messages, [], stream_callback=stream_callback)
 
-    def write_code(self, task_description: str, requirements: list = None) -> str:
+    def write_code(self, task_description: str, requirements: list = None, stream_callback=None) -> str:
         """编写代码"""
         prompt = task_description
         if requirements:
             prompt += "\n\n要求：\n" + "\n".join(f"- {r}" for r in requirements)
 
         messages = [{"role": "user", "content": prompt}]
-        response = self._call_api(messages)
+        response = self._call_api(messages, stream_callback=stream_callback)
         return response["text"]

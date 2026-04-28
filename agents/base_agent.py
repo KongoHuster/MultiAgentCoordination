@@ -1,9 +1,10 @@
 """
 Base Agent - 所有 Agent 的基类
+支持流式输出
 """
 import anthropic
 from abc import ABC, abstractmethod
-from typing import Any, Optional
+from typing import Any, Optional, Callable
 from dataclasses import dataclass
 
 
@@ -39,20 +40,20 @@ class BaseAgent(ABC):
 
     def _call_api(self, messages: list[dict],
                   system: str = None,
-                  tools: list = None) -> dict:
-        """调用 Claude API"""
+                  tools: list = None,
+                  stream_callback: Callable[[str], None] = None) -> dict:
+        """调用 Claude API - 支持流式输出"""
+
         kwargs = {
             "model": self.model,
             "max_tokens": self.max_tokens,
             "messages": messages
         }
 
-        # 某些 API 不支持 system 参数，将 system 融入第一条消息
         if system:
             try:
                 kwargs["system"] = system
             except Exception:
-                # 如果不支持 system，融入第一条 user 消息
                 pass
 
         if tools:
@@ -65,48 +66,56 @@ class BaseAgent(ABC):
 
         for attempt in range(max_retries):
             try:
+                # 使用流式输出
+                kwargs["stream"] = True
                 response = self.client.messages.create(**kwargs)
 
-                # 解析响应 - 处理不同 API 格式
                 result_text = ""
                 tool_calls = []
 
-                # 标准 Anthropic 格式
-                if response.content:
-                    for block in response.content:
-                        if hasattr(block, 'type'):
-                            if block.type == "text":
-                                result_text += block.text
-                            elif block.type == "tool_use":
-                                tool_calls.append({
-                                    "name": block.name,
-                                    "input": block.input,
-                                    "id": block.id
-                                })
-                # 兼容其他 API（如智谱）的格式
-                elif hasattr(response, 'model_extra') and response.model_extra:
-                    choices = response.model_extra.get('choices', [])
-                    if choices and len(choices) > 0:
-                        message = choices[0].get('message', {})
-                        content = message.get('content', '')
-                        if content:
-                            result_text = content
+                # 处理流式响应
+                for event in response:
+                    if hasattr(event, 'type'):
+                        if event.type == "content_block_delta":
+                            # 文本增量
+                            if hasattr(event, 'delta') and hasattr(event.delta, 'text'):
+                                text = event.delta.text
+                                result_text += text
+                                if stream_callback:
+                                    stream_callback(text)
+                        elif event.type == "tool_use_delta":
+                            # 工具调用增量
+                            if hasattr(event, 'delta') and hasattr(event.delta, 'input'):
+                                # 工具输入完成后的处理
+                                pass
+                        elif event.type == "message_delta":
+                            # 消息结束
+                            pass
 
-                # 提取 stop_reason
-                stop_reason = response.stop_reason
-                if not stop_reason and hasattr(response, 'model_extra'):
-                    choices = response.model_extra.get('choices', [])
-                    if choices and len(choices) > 0:
-                        stop_reason = choices[0].get('finish_reason')
+                # 如果没有流式输出，回退到普通调用
+                if not result_text:
+                    kwargs["stream"] = False
+                    response = self.client.messages.create(**kwargs)
+
+                    if response.content:
+                        for block in response.content:
+                            if hasattr(block, 'type'):
+                                if block.type == "text":
+                                    result_text += block.text
+                                    if stream_callback:
+                                        stream_callback(block.text)
+                                elif block.type == "tool_use":
+                                    tool_calls.append({
+                                        "name": block.name,
+                                        "input": block.input,
+                                        "id": block.id
+                                    })
 
                 return {
                     "text": result_text,
                     "tool_calls": tool_calls,
-                    "usage": {
-                        "input_tokens": getattr(response.usage, 'input_tokens', 0) or getattr(response.usage, 'prompt_tokens', 0),
-                        "output_tokens": getattr(response.usage, 'output_tokens', 0) or getattr(response.usage, 'completion_tokens', 0)
-                    },
-                    "stop_reason": stop_reason
+                    "usage": {"input_tokens": 0, "output_tokens": 0},
+                    "stop_reason": "end_turn"
                 }
 
             except Exception as e:
@@ -120,23 +129,22 @@ class BaseAgent(ABC):
 
     def _call_api_with_tools(self, messages: list[dict],
                             tools: list,
-                            max_turns: int = 5) -> AgentResponse:
+                            max_turns: int = 5,
+                            stream_callback: Callable[[str], None] = None) -> AgentResponse:
         """带工具调用的 API 调用"""
         current_messages = messages.copy()
         turn = 0
 
         while turn < max_turns:
-            response = self._call_api(current_messages, tools=tools)
+            response = self._call_api(current_messages, tools=tools, stream_callback=stream_callback)
 
             if not response["tool_calls"]:
-                # 没有工具调用，返回文本结果
                 return AgentResponse(
                     success=True,
                     content=response["text"],
                     usage=response["usage"]
                 )
 
-            # 处理工具调用
             tool_results = []
             for tool_call in response["tool_calls"]:
                 result = self._execute_tool(tool_call)
@@ -145,7 +153,6 @@ class BaseAgent(ABC):
                     "output": result
                 })
 
-            # 添加助手消息和工具结果
             current_messages.append({
                 "role": "assistant",
                 "content": response["text"]

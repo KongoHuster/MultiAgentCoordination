@@ -30,14 +30,14 @@ class EventTypes:
 
 # Agent 信息映射
 AGENT_INFO = {
-    "system": {"name": "System", "icon": "⚙️", "color": "#6b7280"},
-    "orchestrator": {"name": "Orchestrator", "icon": "🎯", "color": "#8b5cf6"},
-    "coder": {"name": "Coder", "icon": "💻", "color": "#3b82f6"},
-    "reviewer": {"name": "Reviewer", "icon": "🔍", "color": "#f59e0b"},
-    "tester": {"name": "Tester", "icon": "🧪", "color": "#10b981"},
-    "project_builder": {"name": "ProjectBuilder", "icon": "🏗️", "color": "#ec4899"},
-    "git_manager": {"name": "GitManager", "icon": "📦", "color": "#6366f1"},
-    "user": {"name": "You", "icon": "👤", "color": "#22c55e"},
+    "system": {"name": "系统", "icon": "⚙️", "color": "#6b7280"},
+    "orchestrator": {"name": "任务编排", "icon": "🎯", "color": "#8b5cf6"},
+    "coder": {"name": "程序员", "icon": "💻", "color": "#3b82f6"},
+    "reviewer": {"name": "审查员", "icon": "🔍", "color": "#f59e0b"},
+    "tester": {"name": "测试员", "icon": "🧪", "color": "#10b981"},
+    "project_builder": {"name": "项目构建", "icon": "🏗️", "color": "#ec4899"},
+    "git_manager": {"name": "Git管理", "icon": "📦", "color": "#6366f1"},
+    "user": {"name": "你", "icon": "👤", "color": "#22c55e"},
 }
 
 

@@ -1,6 +1,6 @@
 /**
  * 多Agent协作系统 - 前端逻辑
- * 处理消息渲染、用户交互、事件响应
+ * 使用轮询/SSE获取后端消息
  */
 
 // ===================================
@@ -12,6 +12,9 @@ const state = {
     currentTaskIndex: 0,
     agentStatus: 'idle',
     passRate: null,
+    lastMessageCount: 0,
+    useSSE: true,
+    taskProgress: { current: 0, total: 0, currentTask: '' },
 };
 
 // ===================================
@@ -25,7 +28,6 @@ const elements = {
     taskList: document.getElementById('taskList'),
     agentStatus: document.getElementById('agentStatus'),
     passRate: document.getElementById('passRate'),
-    loadingOverlay: document.getElementById('loadingOverlay'),
     notificationContainer: document.getElementById('notificationContainer'),
 };
 
@@ -33,9 +35,6 @@ const elements = {
 // 工具函数
 // ===================================
 
-/**
- * 格式化时间
- */
 function formatTime(isoString) {
     const date = new Date(isoString);
     return date.toLocaleTimeString('zh-CN', {
@@ -45,25 +44,16 @@ function formatTime(isoString) {
     });
 }
 
-/**
- * 转义HTML
- */
 function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
 }
 
-/**
- * 滚动到底部
- */
 function scrollToBottom() {
     elements.chatContainer.scrollTop = elements.chatContainer.scrollHeight;
 }
 
-/**
- * 显示通知
- */
 function showNotification(message, type = 'info', duration = 3000) {
     const icons = {
         success: '✅',
@@ -88,9 +78,6 @@ function showNotification(message, type = 'info', duration = 3000) {
     }, duration);
 }
 
-/**
- * 更新状态指示器
- */
 function updateStatus(status) {
     const statusText = {
         ready: '就绪',
@@ -108,9 +95,6 @@ function updateStatus(status) {
 // 消息渲染
 // ===================================
 
-/**
- * 创建消息元素
- */
 function createMessageElement(message) {
     const { type, agent, agentName, agentIcon, agentColor, timestamp, data } = message;
 
@@ -118,7 +102,6 @@ function createMessageElement(message) {
     messageEl.className = `message ${type === 'user_message' ? 'user' : ''}`;
     messageEl.dataset.agent = agent;
 
-    // 头像背景色
     const avatarBg = agentColor || '#6b7280';
 
     messageEl.innerHTML = `
@@ -139,31 +122,24 @@ function createMessageElement(message) {
     return messageEl;
 }
 
-/**
- * 格式化消息内容
- */
 function formatMessageBody(data) {
     if (!data) return '';
 
-    // 如果是字符串
     if (typeof data === 'string') {
         return `<p>${escapeHtml(data)}</p>`;
     }
 
-    // 如果是对象
     let html = '';
 
     if (data.message) {
         html += `<p>${escapeHtml(data.message)}</p>`;
     }
 
-    // 状态徽章
     if (data.status) {
         const statusClass = getStatusClass(data.status);
         html += `<span class="status-badge ${statusClass}">${escapeHtml(data.status)}</span>`;
     }
 
-    // 进度条
     if (data.current !== undefined && data.total !== undefined) {
         const percent = Math.round((data.current / data.total) * 100);
         html += `
@@ -176,7 +152,6 @@ function formatMessageBody(data) {
         `;
     }
 
-    // 决策结果
     if (data.decision) {
         const decisionIcon = getDecisionIcon(data.decision);
         const decisionClass = getStatusClass(data.decision.toLowerCase());
@@ -187,7 +162,6 @@ function formatMessageBody(data) {
         `;
     }
 
-    // 分数/通过率
     if (data.score !== undefined) {
         html += `<p><strong>评分:</strong> ${data.score}/10</p>`;
     }
@@ -196,12 +170,10 @@ function formatMessageBody(data) {
         html += `<p><strong>通过率:</strong> ${data.pass_rate}%</p>`;
     }
 
-    // 重试信息
     if (data.retry_count !== undefined) {
         html += `<p><strong>重试次数:</strong> ${data.retry_count}</p>`;
     }
 
-    // 问题列表
     if (data.issues && Array.isArray(data.issues)) {
         html += '<p><strong>问题:</strong></p><ul>';
         data.issues.forEach(issue => {
@@ -210,18 +182,19 @@ function formatMessageBody(data) {
         html += '</ul>';
     }
 
-    // 代码片段
     if (data.code) {
         const code = escapeHtml(data.code);
         html += `<pre><code>${code}</code></pre>`;
     }
 
+    // 处理 result 对象
+    if (data.status && data.summary) {
+        html += `<p><strong>总结:</strong> ${escapeHtml(data.summary)}</p>`;
+    }
+
     return html || `<p>${JSON.stringify(data, null, 2)}</p>`;
 }
 
-/**
- * 获取状态对应的CSS类
- */
 function getStatusClass(status) {
     const statusMap = {
         'complete': 'success',
@@ -242,9 +215,6 @@ function getStatusClass(status) {
     return statusMap[status?.toLowerCase()] || 'info';
 }
 
-/**
- * 获取决策图标
- */
 function getDecisionIcon(decision) {
     const iconMap = {
         'COMPLETE': '✅',
@@ -256,86 +226,192 @@ function getDecisionIcon(decision) {
 }
 
 // ===================================
-// 公开API (供Python调用)
+// 消息处理
 // ===================================
 
-/**
- * 添加Agent消息
- */
-window.addMessage = function(message) {
+function addMessage(message) {
     // 移除欢迎消息
     const welcome = elements.chatContainer.querySelector('.welcome-message');
     if (welcome) {
         welcome.remove();
     }
 
+    // 更新任务进度
+    if (message.type === 'subtask_start' && message.data) {
+        state.taskProgress.current = message.data.task_index || 0;
+        state.taskProgress.total = message.data.total_tasks || 0;
+        state.taskProgress.currentTask = message.data.task_description || '';
+        updateTaskProgress();
+    }
+
+    if (message.type === 'workflow_complete') {
+        state.taskProgress.current = state.taskProgress.total;
+        updateTaskProgress();
+    }
+
+    // 处理流式更新 - 追加到上一个消息
+    if (message.type === 'stream_update') {
+        const lastMessage = elements.chatContainer.lastElementChild;
+        if (lastMessage && lastMessage.classList.contains('streaming')) {
+            const body = lastMessage.querySelector('.message-body');
+            if (body && message.data && message.data.content) {
+                body.innerHTML = formatMessageBody({ message: message.data.content });
+                scrollToBottom();
+                return;
+            }
+        }
+    }
+
     const messageEl = createMessageElement(message);
+
+    // 如果是流式阶段的消息，添加标记
+    if (message.type === 'coding_start' || message.type === 'review_start' || message.type === 'test_start') {
+        messageEl.classList.add('streaming');
+    }
+
     elements.chatContainer.appendChild(messageEl);
     scrollToBottom();
 
-    // 更新状态
+    // 更新Agent状态
     if (message.agent && message.agent !== 'system') {
         elements.agentStatus.textContent = message.agentName || message.agent;
     }
 
-    // 检查特殊事件
+    // 更新统计数据
+    if (message.data) {
+        if (message.data.pass_rate !== undefined) {
+            elements.passRate.textContent = `${message.data.pass_rate}%`;
+        }
+    }
+
+    // 检查工作流完成
     if (message.type === 'workflow_complete') {
         updateStatus('completed');
         state.isRunning = false;
         elements.sendButton.disabled = false;
-        elements.loadingOverlay.classList.remove('active');
         showNotification('工作流执行完成！', 'success');
     }
 
     if (message.type === 'error') {
         updateStatus('error');
         showNotification(message.data?.message || '发生错误', 'error');
+        state.isRunning = false;
+        elements.sendButton.disabled = false;
     }
-};
+}
 
-/**
- * 添加用户消息
- */
-window.addUserMessage = function(message) {
-    // 移除欢迎消息
-    const welcome = elements.chatContainer.querySelector('.welcome-message');
-    if (welcome) {
-        welcome.remove();
+function updateTaskProgress() {
+    // 更新侧边栏任务列表
+    const taskList = elements.taskList;
+    taskList.innerHTML = '';
+
+    if (state.taskProgress.total === 0) {
+        taskList.innerHTML = `
+            <div class="task-item task-empty">
+                <span class="task-icon">📋</span>
+                <span class="task-text">暂无任务</span>
+            </div>
+        `;
+        return;
     }
 
-    const messageEl = createMessageElement(message);
-    elements.chatContainer.appendChild(messageEl);
-    scrollToBottom();
-};
+    for (let i = 1; i <= state.taskProgress.total; i++) {
+        const isActive = i === state.taskProgress.current;
+        const isCompleted = i < state.taskProgress.current;
+        const statusIcon = isCompleted ? '✅' : (isActive ? '🔄' : '⏳');
+        const statusClass = isActive ? 'active' : '';
+        const taskText = i === state.taskProgress.current && state.taskProgress.currentTask
+            ? state.taskProgress.currentTask
+            : `任务 ${i}/${state.taskProgress.total}`;
 
-/**
- * 更新进度
- */
-window.updateProgress = function(progress) {
-    if (progress.current !== undefined) {
-        // 可以在这里更新进度显示
+        const taskItem = document.createElement('div');
+        taskItem.className = `task-item ${statusClass}`;
+        taskItem.innerHTML = `
+            <span class="task-icon">${statusIcon}</span>
+            <span class="task-text">${escapeHtml(taskText)}</span>
+        `;
+        taskList.appendChild(taskItem);
     }
-};
+}
 
-/**
- * 更新统计数据
- */
-window.updateStats = function(stats) {
-    if (stats.passRate !== undefined) {
-        elements.passRate.textContent = `${stats.passRate}%`;
+// ===================================
+// 后端通信
+// ===================================
+
+let eventSource = null;
+
+function startPolling() {
+    // 使用轮询获取消息
+    const poll = async () => {
+        if (!state.isRunning) return;
+
+        try {
+            const response = await fetch('/api/messages');
+            const data = await response.json();
+
+            // 检查新消息
+            if (data.messages.length > state.lastMessageCount) {
+                for (let i = state.lastMessageCount; i < data.messages.length; i++) {
+                    addMessage(data.messages[i]);
+                }
+                state.lastMessageCount = data.messages.length;
+            }
+
+            // 检查是否还在运行
+            if (!data.is_running && state.isRunning) {
+                state.isRunning = false;
+                elements.sendButton.disabled = false;
+            }
+        } catch (error) {
+            console.error('轮询失败:', error);
+        }
+
+        if (state.isRunning) {
+            setTimeout(poll, 1000);
+        }
+    };
+
+    poll();
+}
+
+function startSSE() {
+    // 使用 Server-Sent Events
+    if (eventSource) {
+        eventSource.close();
     }
-    if (stats.agentStatus) {
-        elements.agentStatus.textContent = stats.agentStatus;
-    }
-};
+
+    eventSource = new EventSource('/api/messages/stream');
+
+    eventSource.onmessage = (event) => {
+        try {
+            const message = JSON.parse(event.data);
+
+            if (message.type === 'done') {
+                eventSource.close();
+                state.isRunning = false;
+                elements.sendButton.disabled = false;
+                elements.loadingOverlay.classList.remove('active');
+                return;
+            }
+
+            addMessage(message);
+        } catch (error) {
+            console.error('解析消息失败:', error);
+        }
+    };
+
+    eventSource.onerror = (error) => {
+        console.error('SSE错误，切换到轮询模式', error);
+        eventSource.close();
+        state.useSSE = false;
+        startPolling();
+    };
+}
 
 // ===================================
 // 用户交互
 // ===================================
 
-/**
- * 发送任务
- */
 async function sendTask() {
     const taskText = elements.taskInput.value.trim();
 
@@ -351,13 +427,13 @@ async function sendTask() {
 
     // 开始执行
     state.isRunning = true;
+    state.lastMessageCount = 0;
     state.agentStatus = 'running';
     updateStatus('running');
     elements.sendButton.disabled = true;
-    elements.loadingOverlay.classList.add('active');
 
     // 添加用户消息
-    window.addUserMessage({
+    addMessage({
         type: 'user_message',
         agent: 'user',
         agentName: 'You',
@@ -370,69 +446,39 @@ async function sendTask() {
     // 清空输入框
     elements.taskInput.value = '';
 
-    // 尝试调用Python后端
+    // 调用后端API
     try {
-        // 通过 expose 的函数调用
-        if (window.start_workflow) {
-            await window.start_workflow(taskText);
-        } else if (window.pywebview && window.pywebview.api) {
-            await window.pywebview.api.startWorkflow(taskText);
-        } else {
-            // 模拟执行
-            simulateWorkflow(taskText);
+        const response = await fetch('/api/start', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ task: taskText })
+        });
+
+        const result = await response.json();
+
+        if (result.error) {
+            showNotification(result.error, 'error');
+            state.isRunning = false;
+            elements.sendButton.disabled = false;
+            elements.loadingOverlay.classList.remove('active');
+            return;
         }
+
+        // 开始接收消息
+        if (state.useSSE) {
+            startSSE();
+        } else {
+            startPolling();
+        }
+
     } catch (error) {
         console.error('启动工作流失败:', error);
         showNotification('启动失败: ' + error.message, 'error');
         state.isRunning = false;
         updateStatus('error');
         elements.sendButton.disabled = false;
-        elements.loadingOverlay.classList.remove('active');
-    }
-}
-
-/**
- * 模拟工作流执行（用于测试）
- */
-async function simulateWorkflow(taskText) {
-    const steps = [
-        { type: 'workflow_start', agent: 'system', agentName: 'System', agentIcon: '🚀', delay: 500 },
-        { type: 'task_decompose', agent: 'orchestrator', agentName: 'Orchestrator', agentIcon: '🎯', delay: 1500 },
-        { type: 'subtask_start', agent: 'orchestrator', agentName: 'Orchestrator', agentIcon: '🎯', delay: 800 },
-        { type: 'coding_start', agent: 'coder', agentName: 'Coder', agentIcon: '💻', delay: 2000 },
-        { type: 'coding_complete', agent: 'coder', agentName: 'Coder', agentIcon: '💻', delay: 1000 },
-        { type: 'review_start', agent: 'reviewer', agentName: 'Reviewer', agentIcon: '🔍', delay: 1200 },
-        { type: 'review_result', agent: 'reviewer', agentName: 'Reviewer', agentIcon: '🔍', delay: 800 },
-        { type: 'test_start', agent: 'tester', agentName: 'Tester', agentIcon: '🧪', delay: 1000 },
-        { type: 'test_result', agent: 'tester', agentName: 'Tester', agentIcon: '🧪', delay: 800 },
-        { type: 'decision', agent: 'orchestrator', agentName: 'Orchestrator', agentIcon: '🎯', delay: 500 },
-        { type: 'workflow_complete', agent: 'system', agentName: 'System', agentIcon: '🎉', delay: 300 },
-    ];
-
-    const messages = [
-        { message: '开始处理您的请求...' },
-        { message: '正在分解任务为子任务...', agent: 'orchestrator' },
-        { message: '开始处理子任务...', agent: 'orchestrator' },
-        { message: 'Coder 正在编写代码...', agent: 'coder' },
-        { message: '代码生成完成！', agent: 'coder', status: 'success' },
-        { message: 'Reviewer 正在审查代码...', agent: 'reviewer' },
-        { message: '审查完成，未发现问题', agent: 'reviewer', status: 'success', score: 9 },
-        { message: 'Tester 正在运行测试...', agent: 'tester' },
-        { message: '测试完成，通过率: 95%', agent: 'tester', status: 'success', pass_rate: 95 },
-        { message: '决策: 任务完成 ✅', agent: 'orchestrator', decision: 'COMPLETE', reason: '测试通过率 >= 80% 且无阻塞问题' },
-        { message: '🎉 工作流执行完成！项目已保存', agent: 'system' },
-    ];
-
-    for (let i = 0; i < steps.length; i++) {
-        await new Promise(resolve => setTimeout(resolve, steps[i].delay));
-        window.addMessage({
-            type: steps[i].type,
-            agent: steps[i].agent,
-            agentName: steps[i].agentName,
-            agentIcon: steps[i].agentIcon,
-            timestamp: new Date().toISOString(),
-            data: messages[i]
-        });
     }
 }
 
@@ -440,10 +486,8 @@ async function simulateWorkflow(taskText) {
 // 事件监听
 // ===================================
 
-// 发送按钮
 elements.sendButton.addEventListener('click', sendTask);
 
-// 输入框 - Enter发送
 elements.taskInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
@@ -451,7 +495,6 @@ elements.taskInput.addEventListener('keydown', (e) => {
     }
 });
 
-// 自动调整输入框高度
 elements.taskInput.addEventListener('input', () => {
     elements.taskInput.style.height = 'auto';
     elements.taskInput.style.height = Math.min(elements.taskInput.scrollHeight, 150) + 'px';
@@ -460,4 +503,8 @@ elements.taskInput.addEventListener('input', () => {
 // ===================================
 // 初始化
 // ===================================
+
+// 清空之前的消息
+fetch('/api/clear', { method: 'POST' }).catch(() => {});
+
 console.log('多Agent协作系统 UI 已加载');

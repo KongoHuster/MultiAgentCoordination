@@ -32,6 +32,10 @@ class WorkflowEngine:
         # UI 事件发射器
         self.ui = get_ui_emitter()
 
+        # 流式消息收集（用于实时更新）
+        self.current_stream_id = None
+        self.stream_content = ""
+
         # Agent
         from agents import (
             OrchestratorAgent,
@@ -50,6 +54,36 @@ class WorkflowEngine:
         self.current_task_id: Optional[str] = None
         self.current_root_task_id: Optional[str] = None
         self.current_project_name: Optional[str] = None
+
+    def _stream_callback(self, text: str):
+        """流式回调 - 实时发送内容到前端"""
+        self.stream_content += text
+        # 定期发送增量更新（比如每50个字符或遇到换行）
+        if len(self.stream_content) > 100 or '\n' in text:
+            self.ui.emit("stream_update", {
+                "stream_id": self.current_stream_id,
+                "content": self.stream_content,
+                "delta": text
+            }, agent=self.stream_agent or "system")
+            self.stream_content = ""
+
+    def _start_stream(self, stream_id: str, agent: str):
+        """开始流式消息"""
+        self.current_stream_id = stream_id
+        self.stream_agent = agent
+        self.stream_content = ""
+
+    def _end_stream(self):
+        """结束流式消息"""
+        if self.stream_content:
+            self.ui.emit("stream_update", {
+                "stream_id": self.current_stream_id,
+                "content": self.stream_content,
+                "delta": ""
+            }, agent=self.stream_agent or "system")
+        self.current_stream_id = None
+        self.stream_agent = None
+        self.stream_content = ""
 
     def run(self, user_request: str) -> dict:
         """运行完整工作流"""
@@ -78,7 +112,7 @@ class WorkflowEngine:
 
         # 3. 分解为子任务
         self.ui.emit(EventTypes.TASK_DECOMPOSE, {
-            "message": "正在分解任务..."
+            "message": "任务编排正在分解任务..."
         }, agent="orchestrator")
         decomposition = self._decompose_tasks(user_request)
         if not decomposition.get("subtasks"):
@@ -252,13 +286,15 @@ class WorkflowEngine:
 
             # 1. 编码
             self.ui.emit(EventTypes.CODING_START, {
-                "message": "Coder 正在编写代码...",
+                "message": "程序员正在编写代码...",
                 "retry_count": retry_count
             }, agent="coder")
             print("1. 编码 Agent 编写代码...")
-            code_result = self._coding_phase(task)
+
+            code_result = self._coding_phase(task, retry_count)
             if not code_result["success"]:
                 retry_count += 1
+                self.task_manager.increment_retry(task.id)
                 continue
 
             self.ui.emit(EventTypes.CODING_COMPLETE, {
@@ -268,7 +304,7 @@ class WorkflowEngine:
 
             # 2. 检视 (使用 Skill)
             self.ui.emit(EventTypes.REVIEW_START, {
-                "message": "Reviewer 正在审查代码..."
+                "message": "审查员正在审查代码..."
             }, agent="reviewer")
             print("2. 使用 Skill 审查代码...")
             review_result = self._review_phase_skill(code_result["code"])
@@ -292,7 +328,7 @@ class WorkflowEngine:
 
             # 3. 测试 (使用 Skill)
             self.ui.emit(EventTypes.TEST_START, {
-                "message": "Tester 正在运行测试..."
+                "message": "测试员正在运行测试..."
             }, agent="tester")
             print("3. 使用 Skill 运行测试...")
             test_result = self._test_phase_skill(code_result["code"])
@@ -310,7 +346,7 @@ class WorkflowEngine:
 
             # 4. 主 Agent 判断
             self.ui.emit(EventTypes.DECISION, {
-                "message": "主 Agent 正在评估结果..."
+                "message": "任务编排正在评估结果..."
             }, agent="orchestrator")
             print("4. 主 Agent 评估结果...")
             decision = self._make_decision(task, test_result, review_result, retry_count)
@@ -362,21 +398,45 @@ class WorkflowEngine:
             "retries": retry_count
         }
 
-    def _coding_phase(self, task) -> dict:
+    def _coding_phase(self, task, retry_count: int = 0) -> dict:
         """编码阶段"""
         try:
             context = self._get_task_context(task)
-            messages = self.coder.format_prompt(task.description, context)
-            response = self.coder.execute(task.description)
+
+            # 开始流式输出
+            self._start_stream(f"coding_{task.id}", "coder")
+            self.ui.emit(EventTypes.CODING_START, {
+                "message": "程序员正在编写代码...",
+                "retry_count": retry_count
+            }, agent="coder")
+
+            # 使用流式回调
+            def stream_cb(text):
+                self._stream_callback(text)
+
+            response = self.coder.execute(task.description, stream_callback=stream_cb)
+
+            # 结束流式输出
+            self._end_stream()
 
             if response.success:
                 code = response.content
                 self.memory.write(f"task:{task.id}:code", code)
+                self.ui.emit(EventTypes.CODING_COMPLETE, {
+                    "message": "代码生成完成",
+                    "code_length": len(code)
+                }, agent="coder")
                 return {"success": True, "code": code}
             else:
+                self.ui.emit(EventTypes.ERROR, {
+                    "message": f"编码失败: {response.error}"
+                }, agent="coder")
                 return {"success": False, "error": response.error}
 
         except Exception as e:
+            self._end_stream()
+            import traceback
+            traceback.print_exc()
             return {"success": False, "error": str(e)}
 
     def _review_phase(self, code: str) -> dict:
@@ -416,7 +476,17 @@ class WorkflowEngine:
     def _review_phase_skill(self, code: str) -> dict:
         """检视阶段 - 使用 Skill"""
         try:
-            # 先用 LLM 生成审查报告
+            # 开始流式输出
+            self._start_stream("review_code", "reviewer")
+            self.ui.emit(EventTypes.REVIEW_START, {
+                "message": "审查员正在审查代码..."
+            }, agent="reviewer")
+
+            # 流式回调
+            def stream_cb(text):
+                self._stream_callback(text)
+
+            # 用 LLM 生成测试用例和报告
             prompt = f"""请审查以下代码，找出潜在问题：
 
 {code}
@@ -432,7 +502,10 @@ class WorkflowEngine:
 }}"""
 
             messages = [{"role": "user", "content": prompt}]
-            response = self.reviewer._call_api(messages)
+            response = self.reviewer._call_api(messages, stream_callback=stream_cb)
+
+            # 结束流式输出
+            self._end_stream()
 
             # 解析 JSON
             import re
@@ -448,6 +521,7 @@ class WorkflowEngine:
             return {"has_blocker": False, "text": text, "overall": "APPROVED", "score": 8}
 
         except Exception as e:
+            self._end_stream()
             print(f"Skill 检视出错: {e}")
             return {"has_blocker": False, "error": str(e)}
 
@@ -485,6 +559,16 @@ class WorkflowEngine:
     def _test_phase_skill(self, code: str) -> dict:
         """测试阶段 - 使用 Skill"""
         try:
+            # 开始流式输出
+            self._start_stream("test_code", "tester")
+            self.ui.emit(EventTypes.TEST_START, {
+                "message": "测试员正在运行测试..."
+            }, agent="tester")
+
+            # 流式回调
+            def stream_cb(text):
+                self._stream_callback(text)
+
             # 用 LLM 生成测试用例和报告
             prompt = f"""请为以下代码生成测试用例并执行，返回测试报告：
 
@@ -500,7 +584,10 @@ class WorkflowEngine:
 }}"""
 
             messages = [{"role": "user", "content": prompt}]
-            response = self.tester._call_api(messages)
+            response = self.tester._call_api(messages, stream_callback=stream_cb)
+
+            # 结束流式输出
+            self._end_stream()
 
             # 解析 JSON
             import re
@@ -520,6 +607,7 @@ class WorkflowEngine:
             }
 
         except Exception as e:
+            self._end_stream()
             return {"status": "PASS", "pass_rate": 100.0, "error": str(e)}
 
     def _make_decision(self, task, test_result: dict,
