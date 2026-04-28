@@ -30,6 +30,8 @@ class AppState:
         self.is_paused = False
         self.lock = threading.Lock()
         self.workflow_thread = None
+        self.pause_event = threading.Event()  # 用于暂停控制
+        self.pause_event.set()  # 默认不暂停
 
 state = AppState()
 
@@ -153,6 +155,7 @@ def pause_workflow():
     """暂停工作流"""
     if state.is_running:
         state.is_paused = True
+        state.pause_event.clear()  # 阻塞等待
         state.messages.append({
             'type': 'workflow_paused',
             'agent': 'system',
@@ -169,6 +172,7 @@ def resume_workflow():
     """恢复工作流"""
     if state.is_paused:
         state.is_paused = False
+        state.pause_event.set()  # 解除阻塞
         state.messages.append({
             'type': 'workflow_resumed',
             'agent': 'system',

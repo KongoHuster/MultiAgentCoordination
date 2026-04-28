@@ -55,14 +55,15 @@ class WorkflowEngine:
         self.current_root_task_id: Optional[str] = None
         self.current_project_name: Optional[str] = None
 
-    def _stream_callback(self, text: str):
-        """流式回调 - 实时发送内容到前端"""
-        # 检查是否暂停
+    def check_pause(self):
+        """检查是否暂停"""
         from web_server import state as app_state
         if app_state.is_paused:
-            while app_state.is_paused:
-                import time
-                time.sleep(0.5)
+            app_state.pause_event.wait()  # 等待恢复
+
+    def _stream_callback(self, text: str):
+        """流式回调 - 实时发送内容到前端"""
+        self.check_pause()  # 检查是否暂停
 
         self.stream_content += text
         # 立即发送增量更新
@@ -97,20 +98,29 @@ class WorkflowEngine:
         print(f"开始处理请求: {user_request}")
         print(f"{'='*60}\n")
 
+        # 检查暂停
+        self.check_pause()
+
         # 1. 生成项目名称
         self.current_project_name = self.project_builder.generate_project_name(user_request)
         print(f"项目名称: {self.current_project_name}")
+
+        # 检查暂停
+        self.check_pause()
+
         self.ui.emit(EventTypes.PROJECT_BUILD, {
             "message": f"项目名称: {self.current_project_name}",
             "project_name": self.current_project_name
         }, agent="project_builder")
 
         # 2. 主 Agent 分解任务
+        self.check_pause()
         root_task = self.task_manager.create_task(user_request)
         self.current_root_task_id = root_task.id
         self.memory.write(f"task:{root_task.id}:request", user_request)
 
         # 3. 分解为子任务
+        self.check_pause()
         self.ui.emit(EventTypes.TASK_DECOMPOSE, {
             "message": "任务编排正在分解任务..."
         }, agent="orchestrator")
@@ -278,6 +288,7 @@ class WorkflowEngine:
         while retry_count < self.MAX_RETRIES:
             print(f"\n--- 尝试 {retry_count + 1}/{self.MAX_RETRIES} ---")
             if retry_count > 0:
+                self.check_pause()
                 self.ui.emit(EventTypes.RETRY, {
                     "message": f"重试中 ({retry_count}/{self.MAX_RETRIES})...",
                     "retry_count": retry_count,
@@ -285,8 +296,9 @@ class WorkflowEngine:
                 }, agent="system")
 
             # 1. 编码
+            self.check_pause()
             self.ui.emit(EventTypes.CODING_START, {
-                "message": "程序员正在编写代码...",
+                "message": "开发者正在编写代码...",
                 "retry_count": retry_count
             }, agent="coder")
             print("1. 编码 Agent 编写代码...")
@@ -303,8 +315,9 @@ class WorkflowEngine:
             }, agent="coder")
 
             # 2. 检视 (使用 Skill)
+            self.check_pause()
             self.ui.emit(EventTypes.REVIEW_START, {
-                "message": "审查员正在审查代码..."
+                "message": "Committer正在审查代码..."
             }, agent="reviewer")
             print("2. 使用 Skill 审查代码...")
             review_result = self._review_phase_skill(code_result["code"])
@@ -327,6 +340,7 @@ class WorkflowEngine:
             }, agent="reviewer")
 
             # 3. 测试 (使用 Skill)
+            self.check_pause()
             self.ui.emit(EventTypes.TEST_START, {
                 "message": "测试员正在运行测试..."
             }, agent="tester")
@@ -345,6 +359,7 @@ class WorkflowEngine:
             }, agent="tester")
 
             # 4. 主 Agent 判断
+            self.check_pause()
             self.ui.emit(EventTypes.DECISION, {
                 "message": "任务编排正在评估结果..."
             }, agent="orchestrator")
@@ -406,7 +421,7 @@ class WorkflowEngine:
             # 开始流式输出
             self._start_stream(f"coding_{task.id}", "coder")
             self.ui.emit(EventTypes.CODING_START, {
-                "message": "程序员正在编写代码...",
+                "message": "开发者正在编写代码...",
                 "retry_count": retry_count
             }, agent="coder")
 
@@ -479,7 +494,7 @@ class WorkflowEngine:
             # 开始流式输出
             self._start_stream("review_code", "reviewer")
             self.ui.emit(EventTypes.REVIEW_START, {
-                "message": "审查员正在审查代码..."
+                "message": "Committer正在审查代码..."
             }, agent="reviewer")
 
             # 流式回调

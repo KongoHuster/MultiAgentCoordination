@@ -31,9 +31,9 @@ class EventTypes:
 # Agent 信息映射
 AGENT_INFO = {
     "system": {"name": "系统", "icon": "⚙️", "color": "#6b7280"},
-    "orchestrator": {"name": "任务编排", "icon": "🎯", "color": "#8b5cf6"},
-    "coder": {"name": "程序员", "icon": "💻", "color": "#3b82f6"},
-    "reviewer": {"name": "审查员", "icon": "🔍", "color": "#f59e0b"},
+    "orchestrator": {"name": "PM", "icon": "🎯", "color": "#8b5cf6"},
+    "coder": {"name": "开发者", "icon": "💻", "color": "#3b82f6"},
+    "reviewer": {"name": "Committer", "icon": "🔍", "color": "#f59e0b"},
     "tester": {"name": "测试员", "icon": "🧪", "color": "#10b981"},
     "project_builder": {"name": "项目构建", "icon": "🏗️", "color": "#ec4899"},
     "git_manager": {"name": "Git管理", "icon": "📦", "color": "#6366f1"},
