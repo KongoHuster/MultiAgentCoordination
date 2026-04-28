@@ -1,0 +1,10 @@
+# Generated code files
+output/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment
+.env
