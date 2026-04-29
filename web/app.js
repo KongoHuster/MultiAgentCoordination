@@ -176,6 +176,20 @@ function formatMessageBody(data) {
         html += `<p><strong>重试次数:</strong> ${data.retry_count}</p>`;
     }
 
+    // 处理 subtasks 数组 - 显示子任务列表
+    if (data.subtasks && Array.isArray(data.subtasks)) {
+        html += '<div class="subtask-list">';
+        data.subtasks.forEach((subtask, index) => {
+            const num = typeof subtask === 'object' ? index + 1 : '';
+            const text = typeof subtask === 'object' ? subtask.description : subtask;
+            html += `<div class="subtask-item">
+                <span class="subtask-num">${num}</span>
+                <span class="subtask-text">${escapeHtml(text)}</span>
+            </div>`;
+        });
+        html += '</div>';
+    }
+
     if (data.issues && Array.isArray(data.issues)) {
         html += '<p><strong>问题:</strong></p><ul>';
         data.issues.forEach(issue => {
@@ -378,6 +392,7 @@ function startPolling() {
             if (!data.is_running && state.isRunning) {
                 state.isRunning = false;
                 elements.sendButton.disabled = false;
+                return;
             }
         } catch (error) {
             console.error('轮询失败:', error);
@@ -407,7 +422,6 @@ function startSSE() {
                 eventSource.close();
                 state.isRunning = false;
                 elements.sendButton.disabled = false;
-                elements.loadingOverlay.classList.remove('active');
                 return;
             }
 
@@ -481,7 +495,6 @@ async function sendTask() {
             showNotification(result.error, 'error');
             state.isRunning = false;
             elements.sendButton.disabled = false;
-            elements.loadingOverlay.classList.remove('active');
             return;
         }
 
