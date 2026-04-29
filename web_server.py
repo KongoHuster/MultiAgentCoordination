@@ -185,6 +185,90 @@ def resume_workflow():
     return jsonify({'error': '任务未暂停'}), 400
 
 
+# ========== 历史记录 API ==========
+@app.route('/api/conversations')
+def list_conversations():
+    """获取历史对话列表"""
+    from database import get_session
+    from models import Conversation
+    try:
+        session = get_session()
+        conversations = session.query(Conversation).order_by(Conversation.created_at.desc()).limit(50).all()
+        result = [{
+            "id": c.id,
+            "user_request": c.user_request,
+            "project_name": c.project_name,
+            "project_path": c.project_path,
+            "git_repo_path": c.git_repo_path,
+            "status": c.status,
+            "created_at": c.created_at.isoformat() if c.created_at else None,
+            "updated_at": c.updated_at.isoformat() if c.updated_at else None
+        } for c in conversations]
+        session.close()
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/conversations/<conv_id>')
+def get_conversation(conv_id):
+    """获取对话详情"""
+    from database import get_session
+    from models import Conversation, Task, Message, CodeResult, ReviewRecord, TestRecord
+    try:
+        session = get_session()
+
+        # 获取对话
+        conv = session.query(Conversation).filter_by(id=conv_id).first()
+        if not conv:
+            session.close()
+            return jsonify({'error': '对话不存在'}), 404
+
+        # 获取任务列表
+        tasks = session.query(Task).filter_by(conversation_id=conv_id).all()
+
+        # 获取消息列表
+        messages = session.query(Message).filter_by(conversation_id=conv_id).order_by(Message.created_at).all()
+
+        # 获取代码结果
+        task_ids = [t.id for t in tasks]
+        code_results = session.query(CodeResult).filter(CodeResult.task_id.in_(task_ids)).all() if task_ids else []
+
+        # 获取审查记录
+        review_records = session.query(ReviewRecord).filter(ReviewRecord.task_id.in_(task_ids)).all() if task_ids else []
+
+        # 获取测试记录
+        test_records = session.query(TestRecord).filter(TestRecord.task_id.in_(task_ids)).all() if task_ids else []
+
+        session.close()
+
+        result = {
+            "conversation": conv.to_dict(),
+            "tasks": [t.to_dict() for t in tasks],
+            "messages": [m.to_dict() for m in messages],
+            "code_results": [c.to_dict() for c in code_results],
+            "review_records": [r.to_dict() for r in review_records],
+            "test_records": [t.to_dict() for t in test_records]
+        }
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/conversations/<conv_id>/tasks')
+def get_conversation_tasks(conv_id):
+    """获取对话的所有任务"""
+    from database import get_session
+    from models import Task
+    try:
+        session = get_session()
+        tasks = session.query(Task).filter_by(conversation_id=conv_id).all()
+        session.close()
+        return jsonify([t.to_dict() for t in tasks])
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 class MessageCollector(UIEventEmitter):
     """消息收集器 - 替代UI事件发射器收集消息"""
 

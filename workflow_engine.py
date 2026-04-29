@@ -4,7 +4,7 @@ Workflow Engine - 工作流引擎（核心循环逻辑）
 import json
 import sys
 import os
-import subprocess
+import uuid
 
 # 添加到路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -15,6 +15,8 @@ from message_queue import MessageQueue, MessageType
 from git_manager import GitManager
 from ui_bridge import get_ui_emitter, EventTypes
 from config import get_config
+from database import get_session, init_db
+from models import Conversation, Task as DBTask, Message as DBMessage, CodeResult, ReviewRecord, TestRecord
 from typing import Optional
 
 
@@ -24,6 +26,15 @@ class WorkflowEngine:
     MAX_RETRIES = 3
 
     def __init__(self, api_key: str):
+        # 初始化数据库
+        try:
+            init_db()
+        except Exception as e:
+            print(f"数据库初始化警告: {e}")
+
+        # 数据库会话
+        self.db_session = None
+
         # 基础设施
         self.memory = memory
         self.task_manager = TaskManager()
@@ -61,6 +72,7 @@ class WorkflowEngine:
         self.current_task_id: Optional[str] = None
         self.current_root_task_id: Optional[str] = None
         self.current_project_name: Optional[str] = None
+        self.current_conversation_id: Optional[str] = None
 
     def check_pause(self):
         """检查是否暂停"""
@@ -93,13 +105,124 @@ class WorkflowEngine:
         self.stream_agent = None
         self.stream_content = ""
 
+    def _save_message(self, event_type: str, data: dict, agent: str, agent_name: str = None, agent_icon: str = None):
+        """保存消息到数据库"""
+        if not self.db_session:
+            return
+
+        try:
+            msg = DBMessage(
+                id=str(uuid.uuid4()),
+                conversation_id=self.current_conversation_id,
+                agent=agent,
+                agent_name=agent_name or agent,
+                agent_icon=agent_icon,
+                message_type=event_type,
+                content=data.get("message", "") or data.get("content", ""),
+                extra_data=data
+            )
+            self.db_session.add(msg)
+            self.db_session.commit()
+        except Exception as e:
+            print(f"保存消息失败: {e}")
+            self.db_session.rollback()
+
+    def _save_code_result(self, task_id: str, code: str, file_path: str = None):
+        """保存代码结果"""
+        if not self.db_session:
+            return
+
+        try:
+            code_result = CodeResult(
+                id=str(uuid.uuid4()),
+                task_id=task_id,
+                code=code,
+                file_path=file_path
+            )
+            self.db_session.add(code_result)
+            self.db_session.commit()
+        except Exception as e:
+            print(f"保存代码结果失败: {e}")
+            self.db_session.rollback()
+
+    def _save_review(self, task_id: str, review_data: dict):
+        """���存审查记录"""
+        if not self.db_session:
+            return
+
+        try:
+            review = ReviewRecord(
+                id=str(uuid.uuid4()),
+                task_id=task_id,
+                score=review_data.get("score", 0),
+                has_blocker=review_data.get("has_blocker", False),
+                issues=review_data.get("issues", []),
+                review_content=review_data.get("content", "")
+            )
+            self.db_session.add(review)
+            self.db_session.commit()
+        except Exception as e:
+            print(f"保存审查记录失败: {e}")
+            self.db_session.rollback()
+
+    def _save_test(self, task_id: str, test_data: dict):
+        """保存测试记录"""
+        if not self.db_session:
+            return
+
+        try:
+            test = TestRecord(
+                id=str(uuid.uuid4()),
+                task_id=task_id,
+                status=test_data.get("status", "UNKNOWN"),
+                pass_rate=test_data.get("pass_rate", 0),
+                tests=test_data.get("tests", []),
+                test_content=test_data.get("content", "")
+            )
+            self.db_session.add(test)
+            self.db_session.commit()
+        except Exception as e:
+            print(f"保存测试记录失败: {e}")
+            self.db_session.rollback()
+
     def run(self, user_request: str) -> dict:
         """运行完整工作流"""
+        # 初始化数据库会话
+        try:
+            self.db_session = get_session()
+        except Exception as e:
+            print(f"数据库连接失败: {e}")
+            self.db_session = None
+
+        # 生成项目名称（提前，以便创建对话）
+        self.current_project_name = self.project_builder.generate_project_name(user_request)
+
+        # 创建对话记录
+        self.current_conversation_id = str(uuid.uuid4())
+        if self.db_session:
+            try:
+                conversation = Conversation(
+                    id=self.current_conversation_id,
+                    user_request=user_request,
+                    project_name=self.current_project_name,
+                    status="running"
+                )
+                self.db_session.add(conversation)
+                self.db_session.commit()
+            except Exception as e:
+                print(f"保存对话记录失败: {e}")
+
         # 发送UI事件
         self.ui.emit(EventTypes.WORKFLOW_START, {
             "message": "开始处理您的请求...",
             "request": user_request
         }, agent="system")
+
+        # 保存消息到数据库
+        self._save_message(EventTypes.WORKFLOW_START, {
+            "message": "开始处理您的请求...",
+            "request": user_request
+        }, "system", "系统")
 
         print(f"\n{'='*60}")
         print(f"开始处理请求: {user_request}")
@@ -108,9 +231,7 @@ class WorkflowEngine:
         # 检查暂停
         self.check_pause()
 
-        # 1. 生成项目名称
-        self.current_project_name = self.project_builder.generate_project_name(user_request)
-        print(f"项目名称: {self.current_project_name}")
+        print(f"项目���称: {self.current_project_name}")
 
         # 检查暂停
         self.check_pause()
@@ -308,6 +429,10 @@ class WorkflowEngine:
                 "message": "开发者正在编写代码...",
                 "retry_count": retry_count
             }, agent="coder")
+            self._save_message(EventTypes.CODING_START, {
+                "message": "开发者正在编写代码...",
+                "retry_count": retry_count
+            }, "coder", "开发者", "💻")
             print("1. 编码 Agent 编写代码...")
 
             code_result = self._coding_phase(task, retry_count)
@@ -318,8 +443,17 @@ class WorkflowEngine:
 
             self.ui.emit(EventTypes.CODING_COMPLETE, {
                 "message": "代码生成完成",
-                "code_length": len(code_result.get("code", ""))
+                "code_length": len(code_result.get("code", "")),
+                "content": code_result.get("code", "")
             }, agent="coder")
+            self._save_message(EventTypes.CODING_COMPLETE, {
+                "message": "代码生成完成",
+                "code_length": len(code_result.get("code", "")),
+                "content": code_result.get("code", "")
+            }, "coder", "开发者", "💻")
+
+            # 保存代码结果到数据库
+            self._save_code_result(task.id, code_result.get("code", ""))
 
             # 2. 检视 (使用 Skill)
             self.check_pause()
@@ -332,6 +466,11 @@ class WorkflowEngine:
                     "has_blocker": True,
                     "score": review_result.get("score", 0)
                 }, agent="reviewer")
+                self._save_message(EventTypes.REVIEW_RESULT, {
+                    "message": "审查发现问题，需重做",
+                    "has_blocker": True,
+                    "score": review_result.get("score", 0)
+                }, "reviewer", "Committer", "🔍")
                 retry_count += 1
                 self.task_manager.increment_retry(task.id)
                 continue
@@ -340,8 +479,19 @@ class WorkflowEngine:
                 "message": "审查完成，未发现阻塞问题",
                 "has_blocker": False,
                 "score": review_result.get("score", 0),
-                "issues": [i.get("description") for i in review_result.get("issues", [])]
+                "issues": [i.get("description") for i in review_result.get("issues", [])],
+                "content": review_result.get("text", "")
             }, agent="reviewer")
+            self._save_message(EventTypes.REVIEW_RESULT, {
+                "message": "审查完成，未发现阻塞问题",
+                "has_blocker": False,
+                "score": review_result.get("score", 0),
+                "issues": [i.get("description") for i in review_result.get("issues", [])],
+                "content": review_result.get("text", "")
+            }, "reviewer", "Committer", "🔍")
+
+            # 保存审查记录到数据库
+            self._save_review(task.id, review_result)
 
             # 3. 测试 (使用 Skill)
             self.check_pause()
@@ -356,8 +506,18 @@ class WorkflowEngine:
             self.ui.emit(EventTypes.TEST_RESULT, {
                 "message": f"测试完成，通过率: {test_result.get('pass_rate', 100)}%",
                 "status": test_result.get("status", "PASS"),
-                "pass_rate": test_result.get("pass_rate", 100)
+                "pass_rate": test_result.get("pass_rate", 100),
+                "content": test_result.get("content", "")
             }, agent="tester")
+            self._save_message(EventTypes.TEST_RESULT, {
+                "message": f"测试完成，通过率: {test_result.get('pass_rate', 100)}%",
+                "status": test_result.get("status", "PASS"),
+                "pass_rate": test_result.get("pass_rate", 100),
+                "content": test_result.get("content", "")
+            }, "tester", "测试员", "🧪")
+
+            # 保存测试记录到数据库
+            self._save_test(task.id, test_result)
 
             # 4. 主 Agent 判断
             self.check_pause()

@@ -29,6 +29,9 @@ class Config:
     git_auto_commit: bool = True
     git_branch: str = "main"
 
+    # 数据库配置
+    database_url: str = "postgresql://postgres:postgres@localhost:5432/multiagent"
+
     @classmethod
     def from_env(cls) -> "Config":
         """从环境变量加载配置"""
@@ -41,7 +44,8 @@ class Config:
             default_model=os.getenv("ANTHROPIC_DEFAULT_SONNET_MODEL", "glm-5"),
             max_tokens=int(os.getenv("MAX_TOKENS", "4096")),
             max_retries=int(os.getenv("MAX_RETRIES", "3")),
-            git_auto_commit=os.getenv("GIT_AUTO_COMMIT", "true").lower() == "true"
+            git_auto_commit=os.getenv("GIT_AUTO_COMMIT", "true").lower() == "true",
+            database_url=os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/multiagent")
         )
 
 
