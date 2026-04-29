@@ -137,6 +137,11 @@ function formatMessageBody(data) {
         html += `<p>${escapeHtml(data.message)}</p>`;
     }
 
+    // 显示代码内容
+    if (data.content) {
+        html += `<pre><code class="code-block">${escapeHtml(data.content)}</code></pre>`;
+    }
+
     if (data.status) {
         const statusClass = getStatusClass(data.status);
         html += `<span class="status-badge ${statusClass}">${escapeHtml(data.status)}</span>`;

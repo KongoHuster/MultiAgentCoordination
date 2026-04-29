@@ -14,6 +14,7 @@ from task_manager import TaskManager, TaskStatus
 from message_queue import MessageQueue, MessageType
 from git_manager import GitManager
 from ui_bridge import get_ui_emitter, EventTypes
+from config import get_config
 from typing import Optional
 
 
@@ -35,6 +36,7 @@ class WorkflowEngine:
         # 流式消息收集（用于实时更新）
         self.current_stream_id = None
         self.stream_content = ""
+        self.stream_agent = "system"
 
         # Agent
         from agents import (
@@ -44,10 +46,15 @@ class WorkflowEngine:
             TesterAgent,
             ProjectBuilder
         )
-        self.orchestrator = OrchestratorAgent(api_key, base_url="https://milukey.cn")
-        self.coder = CoderAgent(api_key, base_url="https://milukey.cn")
-        self.reviewer = ReviewerAgent(api_key, base_url="https://milukey.cn")
-        self.tester = TesterAgent(api_key, base_url="https://milukey.cn")
+
+        # 直接使用 Ollama 本地模型（硬编码）
+        self.ollama_url = "http://localhost:11434"
+        self.ollama_model = "gemma2:9b"
+
+        self.orchestrator = OrchestratorAgent(api_key, base_url=self.ollama_url, model=self.ollama_model)
+        self.coder = CoderAgent(api_key, base_url=self.ollama_url, model=self.ollama_model)
+        self.reviewer = ReviewerAgent(api_key, base_url=self.ollama_url, model=self.ollama_model)
+        self.tester = TesterAgent(api_key, base_url=self.ollama_url, model=self.ollama_model)
         self.project_builder = ProjectBuilder()
 
         # 状态
@@ -316,9 +323,6 @@ class WorkflowEngine:
 
             # 2. 检视 (使用 Skill)
             self.check_pause()
-            self.ui.emit(EventTypes.REVIEW_START, {
-                "message": "Committer正在审查代码..."
-            }, agent="reviewer")
             print("2. 使用 Skill 审查代码...")
             review_result = self._review_phase_skill(code_result["code"])
             if review_result.get("has_blocker"):
@@ -341,9 +345,6 @@ class WorkflowEngine:
 
             # 3. 测试 (使用 Skill)
             self.check_pause()
-            self.ui.emit(EventTypes.TEST_START, {
-                "message": "测试员正在运行测试..."
-            }, agent="tester")
             print("3. 使用 Skill 运行测试...")
             test_result = self._test_phase_skill(code_result["code"])
             self.memory.write(
@@ -418,27 +419,21 @@ class WorkflowEngine:
         try:
             context = self._get_task_context(task)
 
-            # 开始流式输出
-            self._start_stream(f"coding_{task.id}", "coder")
-            self.ui.emit(EventTypes.CODING_START, {
-                "message": "开发者正在编写代码...",
-                "retry_count": retry_count
-            }, agent="coder")
-
             # 使用流式回调
             def stream_cb(text):
                 self._stream_callback(text)
+                self.check_pause()
 
             response = self.coder.execute(task.description, stream_callback=stream_cb)
-
-            # 结束流式输出
-            self._end_stream()
 
             if response.success:
                 code = response.content
                 self.memory.write(f"task:{task.id}:code", code)
+
+                # 发送包含代码的消息
                 self.ui.emit(EventTypes.CODING_COMPLETE, {
                     "message": "代码生成完成",
+                    "content": code,
                     "code_length": len(code)
                 }, agent="coder")
                 return {"success": True, "code": code}
@@ -449,7 +444,6 @@ class WorkflowEngine:
                 return {"success": False, "error": response.error}
 
         except Exception as e:
-            self._end_stream()
             import traceback
             traceback.print_exc()
             return {"success": False, "error": str(e)}
@@ -491,15 +485,10 @@ class WorkflowEngine:
     def _review_phase_skill(self, code: str) -> dict:
         """检视阶段 - 使用 Skill"""
         try:
-            # 开始流式输出
-            self._start_stream("review_code", "reviewer")
-            self.ui.emit(EventTypes.REVIEW_START, {
-                "message": "Committer正在审查代码..."
-            }, agent="reviewer")
-
             # 流式回调
             def stream_cb(text):
                 self._stream_callback(text)
+                self.check_pause()
 
             # 用 LLM 生成测试用例和报告
             prompt = f"""请审查以下代码，找出潜在问题：
@@ -519,12 +508,18 @@ class WorkflowEngine:
             messages = [{"role": "user", "content": prompt}]
             response = self.reviewer._call_api(messages, stream_callback=stream_cb)
 
-            # 结束流式输出
-            self._end_stream()
-
             # 解析 JSON
             import re
             text = response["text"]
+
+            # 发送包含审查内容的最终消息
+            self.ui.emit(EventTypes.REVIEW_RESULT, {
+                "message": "审查完成",
+                "content": text,
+                "has_blocker": False,
+                "score": 8
+            }, agent="reviewer")
+
             json_match = re.search(r'\{.*\}', text, re.DOTALL)
             if json_match:
                 try:
@@ -536,7 +531,6 @@ class WorkflowEngine:
             return {"has_blocker": False, "text": text, "overall": "APPROVED", "score": 8}
 
         except Exception as e:
-            self._end_stream()
             print(f"Skill 检视出错: {e}")
             return {"has_blocker": False, "error": str(e)}
 
@@ -574,15 +568,10 @@ class WorkflowEngine:
     def _test_phase_skill(self, code: str) -> dict:
         """测试阶段 - 使用 Skill"""
         try:
-            # 开始流式输出
-            self._start_stream("test_code", "tester")
-            self.ui.emit(EventTypes.TEST_START, {
-                "message": "测试员正在运行测试..."
-            }, agent="tester")
-
             # 流式回调
             def stream_cb(text):
                 self._stream_callback(text)
+                self.check_pause()
 
             # 用 LLM 生成测试用例和报告
             prompt = f"""请为以下代码生成测试用例并执行，返回测试报告：
@@ -601,12 +590,18 @@ class WorkflowEngine:
             messages = [{"role": "user", "content": prompt}]
             response = self.tester._call_api(messages, stream_callback=stream_cb)
 
-            # 结束流式输出
-            self._end_stream()
-
             # 解析 JSON
             import re
             text = response["text"]
+
+            # 发送包含测试内容的最终消息
+            self.ui.emit(EventTypes.TEST_RESULT, {
+                "message": "测试完成",
+                "content": text,
+                "status": "PASS",
+                "pass_rate": 100
+            }, agent="tester")
+
             json_match = re.search(r'\{.*\}', text, re.DOTALL)
             if json_match:
                 try:

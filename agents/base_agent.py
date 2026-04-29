@@ -1,8 +1,9 @@
 """
 Base Agent - 所有 Agent 的基类
-支持流式输出
+支持流式输出和 Ollama
 """
 import anthropic
+import httpx
 from abc import ABC, abstractmethod
 from typing import Any, Optional, Callable
 from dataclasses import dataclass
@@ -26,12 +27,22 @@ class BaseAgent(ABC):
                  max_tokens: int = 4096):
         self.name = name
         self.system_prompt = system_prompt
-        self.client = anthropic.Anthropic(
-            api_key=api_key,
-            base_url=base_url
-        )
         self.model = model
         self.max_tokens = max_tokens
+        self.max_retries = 3
+
+        # 检测是否使用 Ollama
+        self.use_ollama = "localhost" in base_url or "ollama" in base_url.lower()
+
+        if self.use_ollama:
+            # Ollama 使用 httpx
+            self.client = httpx.Client(base_url=base_url, timeout=300)
+        else:
+            # Anthropic API
+            self.client = anthropic.Anthropic(
+                api_key=api_key,
+                base_url=base_url
+            )
 
     @abstractmethod
     def execute(self, task: str, context: dict = None) -> AgentResponse:
@@ -42,7 +53,60 @@ class BaseAgent(ABC):
                   system: str = None,
                   tools: list = None,
                   stream_callback: Callable[[str], None] = None) -> dict:
-        """调用 Claude API - 支持流式输出"""
+        """调用 API - 支持 Ollama 和 Anthropic"""
+
+        if self.use_ollama:
+            return self._call_ollama(messages, system, stream_callback)
+        else:
+            return self._call_anthropic(messages, system, tools, stream_callback)
+
+    def _call_ollama(self, messages: list[dict],
+                     system: str = None,
+                     stream_callback: Callable[[str], None] = None) -> dict:
+        """调用 Ollama API"""
+        import json
+
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "stream": True
+        }
+        if system:
+            # Ollama 使用 system 字段
+            payload["system"] = system
+
+        try:
+            result_text = ""
+            with self.client.stream("POST", "/api/chat", json=payload) as response:
+                for line in response.iter_lines():
+                    if line:
+                        try:
+                            data = json.loads(line)
+                            if "message" in data and "content" in data["message"]:
+                                content = data["message"]["content"]
+                                result_text += content
+                                if stream_callback:
+                                    stream_callback(content)
+                            elif data.get("done"):
+                                break
+                        except json.JSONDecodeError:
+                            continue
+
+            return {
+                "text": result_text,
+                "tool_calls": [],
+                "usage": {"input_tokens": 0, "output_tokens": 0},
+                "stop_reason": "end_turn"
+            }
+        except Exception as e:
+            print(f"Ollama 调用失败: {e}")
+            return {"text": f"错误: {str(e)}", "tool_calls": [], "usage": {}, "stop_reason": "error"}
+
+    def _call_anthropic(self, messages: list[dict],
+                        system: str = None,
+                        tools: list = None,
+                        stream_callback: Callable[[str], None] = None) -> dict:
+        """调用 Anthropic API - 支持流式输出"""
 
         kwargs = {
             "model": self.model,
@@ -61,10 +125,9 @@ class BaseAgent(ABC):
 
         # 添加超时和重试
         import time
-        max_retries = 3
         last_error = None
 
-        for attempt in range(max_retries):
+        for attempt in range(self.max_retries):
             try:
                 # 使用流式输出
                 kwargs["stream"] = True
@@ -86,10 +149,8 @@ class BaseAgent(ABC):
                         elif event.type == "tool_use_delta":
                             # 工具调用增量
                             if hasattr(event, 'delta') and hasattr(event.delta, 'input'):
-                                # 工具输入完成后的处理
                                 pass
                         elif event.type == "message_delta":
-                            # 消息结束
                             pass
 
                 # 如果没有流式输出，回退到普通调用
@@ -120,9 +181,9 @@ class BaseAgent(ABC):
 
             except Exception as e:
                 last_error = e
-                if attempt < max_retries - 1:
+                if attempt < self.max_retries - 1:
                     wait_time = (attempt + 1) * 2
-                    print(f"API 调用失败，重试 ({attempt + 1}/{max_retries})...")
+                    print(f"API 调用失败，重试 ({attempt + 1}/{self.max_retries})...")
                     time.sleep(wait_time)
                     continue
                 raise last_error

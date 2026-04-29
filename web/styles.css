@@ -421,6 +421,8 @@ body {
     margin: 8px 0;
     font-family: 'SF Mono', Consolas, Monaco, monospace;
     font-size: 13px;
+    max-height: 400px;
+    overflow-y: auto;
 }
 
 .message-body code {
@@ -434,6 +436,11 @@ body {
 .message-body pre code {
     background: none;
     padding: 0;
+}
+
+.code-block {
+    white-space: pre-wrap;
+    word-wrap: break-word;
 }
 
 /* 状态徽章 */
