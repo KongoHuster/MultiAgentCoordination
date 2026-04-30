@@ -16,6 +16,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import get_config
 from workflow_engine import WorkflowEngine
 from ui_bridge import get_ui_emitter, EventTypes, UIEventEmitter
+from agents.orchestrator import OrchestratorAgent
+from agents.coder import CoderAgent
+from agents.reviewer import ReviewerAgent
+from agents.tester import TesterAgent
 
 # 创建Flask应用
 app = Flask(__name__, static_folder='web', static_url_path='')
@@ -35,8 +39,123 @@ class AppState:
         # 多项目支持
         self.projects = {}
         self.current_project_id = None
+        # 配置
+        self.config = get_config()
 
 state = AppState()
+
+
+# ========== AI Agent 执行器 ==========
+
+class AgentExecutor:
+    """AI Agent执行器 - 调用真实AI进行任务处理"""
+
+    def __init__(self, project, config=None):
+        self.project = project
+        self.config = config or get_config()
+
+        # 初始化Agent（使用Ollama）
+        if self.config.use_ollama:
+            base_url = self.config.ollama_url
+            model = self.config.ollama_model
+        else:
+            base_url = self.config.base_url
+            model = self.config.default_model
+
+        self.orchestrator = OrchestratorAgent(
+            api_key=self.config.anthropic_api_key,
+            base_url=base_url,
+            model=model
+        )
+        self.coder = CoderAgent(
+            api_key=self.config.anthropic_api_key,
+            base_url=base_url,
+            model=model
+        )
+        self.reviewer = ReviewerAgent(
+            api_key=self.config.anthropic_api_key,
+            base_url=base_url,
+            model=model
+        )
+        self.tester = TesterAgent(
+            api_key=self.config.anthropic_api_key,
+            base_url=base_url,
+            model=model
+        )
+
+    def decompose_task(self, user_request):
+        """调用AI进行任务分解"""
+        try:
+            result = self.orchestrator.decompose_task(user_request)
+            return result.get('text', '')
+        except Exception as e:
+            return f"任务分解失败: {str(e)}"
+
+    def generate_code(self, task):
+        """调用AI生成代码"""
+        try:
+            result = self.coder.execute(task)
+            return result.content if hasattr(result, 'content') else str(result)
+        except Exception as e:
+            return f"代码生成失败: {str(e)}"
+
+    def review_code(self, code_content):
+        """调用AI审查代码"""
+        try:
+            result = self.reviewer.execute(code_content)
+            return result.content if hasattr(result, 'content') else str(result)
+        except Exception as e:
+            return f"代码审查失败: {str(e)}"
+
+    def fix_issues(self, issues, code_content):
+        """调用AI根据审查反馈修复代码"""
+        try:
+            prompt = f"""根据以下审查问题，修复代码中的问题。
+
+审查问题：
+{issues}
+
+当前代码：
+{code_content}
+
+请生成修复后的代码，并说明做了哪些修改。"""
+            result = self.coder.execute(prompt)
+            return result.content if hasattr(result, 'content') else str(result)
+        except Exception as e:
+            return f"代码修复失败: {str(e)}"
+
+    def generate_tests(self, code_content):
+        """调用AI生成测试"""
+        try:
+            result = self.tester.execute(code_content)
+            return result.content if hasattr(result, 'content') else str(result)
+        except Exception as e:
+            return f"测试生成失败: {str(e)}"
+
+
+def find_agent(project, agent_id):
+    """查找项目中的Agent"""
+    for agent in project.get('agents', []):
+        if agent['id'] == agent_id:
+            return agent
+    return {'id': agent_id, 'name': agent_id, 'icon': '🤖', 'color': '#6b7280'}
+
+
+def send_ai_message(project, agent_id, content):
+    """发送AI生成的消息到聊天"""
+    agent = find_agent(project, agent_id)
+    msg = {
+        'id': f'msg-{len(project["messages"]) + 1}',
+        'agent': agent_id,
+        'agentName': agent['name'],
+        'agentIcon': agent['icon'],
+        'agentColor': agent.get('color', '#6b7280'),
+        'content': content,
+        'timestamp': __import__('datetime').datetime.now().isoformat(),
+        'isAI': True
+    }
+    project['messages'].append(msg)
+    return msg
 
 # Web界面
 @app.route('/')
@@ -256,6 +375,31 @@ def get_project_messages(project_id):
     return jsonify({'messages': state.projects[project_id].get('messages', [])})
 
 
+@app.route('/api/projects/<project_id>/tasks', methods=['GET'])
+def get_project_tasks(project_id):
+    """获取项目任务列表"""
+    if project_id not in state.projects:
+        return jsonify({'error': '项目不存在'}), 404
+    return jsonify({'tasks': state.projects[project_id].get('tasks', [])})
+
+
+@app.route('/api/projects/<project_id>/tasks/<task_id>', methods=['PUT'])
+def update_project_task(project_id, task_id):
+    """更新任务状态"""
+    if project_id not in state.projects:
+        return jsonify({'error': '项目不存在'}), 404
+
+    project = state.projects[project_id]
+    data = request.json
+
+    for task in project.get('tasks', []):
+        if task['id'] == task_id:
+            task.update(data)
+            return jsonify({'success': True, 'task': task})
+
+    return jsonify({'error': '任务不存在'}), 404
+
+
 @app.route('/api/projects/<project_id>/messages', methods=['POST'])
 def send_project_message(project_id):
     """向项目发送消息"""
@@ -266,9 +410,9 @@ def send_project_message(project_id):
     content = data.get('content', '')
     is_interrupt = data.get('isInterrupt', False)
 
-    # 添加用户消息
+    project = state.projects[project_id]
     user_msg = {
-        'id': f'msg-{len(state.projects[project_id]["messages"]) + 1}',
+        'id': f'msg-{len(project.get("messages", [])) + 1}',
         'agent': 'user',
         'agentName': '我',
         'agentIcon': '👤',
@@ -282,12 +426,166 @@ def send_project_message(project_id):
     # 更新项目状态
     state.projects[project_id]['status'] = 'running'
 
+    # 检查是否启用AI模式
+    use_ai = data.get('useAI', False)
+
     # 后台处理消息
-    thread = threading.Thread(target=process_project_message, args=(project_id, content, is_interrupt))
+    if use_ai and state.config.use_ollama:
+        # 使用真实AI Agent
+        thread = threading.Thread(target=process_project_message_with_ai,
+                                args=(project_id, content, is_interrupt))
+    else:
+        # 使用模拟消息
+        thread = threading.Thread(target=process_project_message,
+                                args=(project_id, content, is_interrupt))
     thread.daemon = True
     thread.start()
 
     return jsonify({'success': True, 'message': user_msg})
+
+
+def process_project_message_with_ai(project_id, content, is_interrupt=False):
+    """使用真实AI Agent处理项目消息"""
+    import time
+    project = state.projects[project_id]
+
+    # 初始化任务列表
+    if 'tasks' not in project:
+        project['tasks'] = []
+    if 'pending_fixes' not in project:
+        project['pending_fixes'] = []
+    if 'generated_code' not in project:
+        project['generated_code'] = ''
+
+    if is_interrupt:
+        # 打断处理
+        time.sleep(0.5)
+        msg = {
+            'id': f'msg-{len(project["messages"]) + 1}',
+            'agent': 'orchestrator',
+            'agentName': '项目经理',
+            'agentIcon': '🎯',
+            'agentColor': '#8b5cf6',
+            'content': f'收到您的打断："{content}"，正在调整任务...',
+            'timestamp': __import__('datetime').datetime.now().isoformat(),
+        }
+        project['messages'].append(msg)
+        project['status'] = 'idle'
+        return
+
+    # 初始化AI执行器
+    executor = AgentExecutor(project, state.config)
+
+    # ===== 阶段1: 项目经理任务分解 =====
+    send_ai_message(project, 'orchestrator', '🎯 正在调用AI分析任务需求...')
+    time.sleep(1)
+
+    try:
+        # 调用AI进行任务分解
+        ai_task_list = executor.decompose_task(content)
+        send_ai_message(project, 'orchestrator', f'📋 **AI任务分解结果:**\n\n{ai_task_list}')
+    except Exception as e:
+        send_ai_message(project, 'orchestrator', f'⚠️ AI任务分解失败，使用默认任务列表。错误: {str(e)}')
+
+    # 初始化项目任务
+    project['tasks'] = [
+        {'id': 't1', 'title': '代码开发', 'assignee': 'coder', 'status': 'pending'},
+        {'id': 't2', 'title': '代码审查', 'assignee': 'reviewer', 'status': 'pending', 'depends_on': ['t1']},
+        {'id': 't3', 'title': '修复审查问题', 'assignee': 'coder', 'status': 'pending', 'depends_on': ['t2'], 'is_fix_task': True},
+        {'id': 't4', 'title': '生成测试', 'assignee': 'tester', 'status': 'pending', 'depends_on': ['t3']},
+    ]
+
+    # 显示任务列表
+    task_list_msg = '📋 **任务分解:**\n\n'
+    for t in project['tasks']:
+        status_icon = {'pending': '☐', 'in_progress': '◐', 'completed': '☑'}.get(t['status'], '?')
+        task_list_msg += f'{status_icon} **[{t["id"]}] {t["title"]}** - {t["assignee"]}\n'
+    send_ai_message(project, 'orchestrator', task_list_msg)
+
+    # ===== 阶段2: 开发者代码生成 =====
+    for task in project['tasks']:
+        if task['assignee'] != 'coder' or task.get('is_fix_task'):
+            continue
+
+        task['status'] = 'in_progress'
+        send_ai_message(project, 'coder', f'💻 **执行 [{task["id"]}] {task["title"]}...**')
+
+        try:
+            # 调用AI生成代码
+            code_result = executor.generate_code(f"用户需求: {content}\n\n任务: {task['title']}")
+            project['generated_code'] = code_result
+            send_ai_message(project, 'coder', f'📝 **AI生成的代码:**\n\n```python\n{code_result}\n```')
+        except Exception as e:
+            send_ai_message(project, 'coder', f'⚠️ 代码生成失败: {str(e)}')
+
+        task['status'] = 'completed'
+
+    # ===== 阶段3: 审查员代码审查 =====
+    review_task = next((t for t in project['tasks'] if t['assignee'] == 'reviewer'), None)
+    if review_task:
+        review_task['status'] = 'in_progress'
+        send_ai_message(project, 'reviewer', f'🔍 **执行 [{review_task["id"]}] {review_task["title"]}...**')
+
+        try:
+            # 调用AI审查代码
+            review_result = executor.review_code(project.get('generated_code', ''))
+            send_ai_message(project, 'reviewer', f'🔍 **AI代码审查结果:**\n\n{review_result}')
+
+            # 检查是否有问题需要修复
+            if '问题' in review_result or 'issue' in review_result.lower() or 'BLOCKER' in review_result:
+                # 自动创建修复任务
+                project['pending_fixes'] = [{'issue': review_result}]
+                fix_task = next((t for t in project['tasks'] if t.get('is_fix_task')), None)
+                if fix_task:
+                    fix_task['status'] = 'pending'
+                    send_ai_message(project, 'reviewer', '⚠️ 发现问题，自动创建修复任务 [t3]')
+        except Exception as e:
+            send_ai_message(project, 'reviewer', f'⚠️ 代码审查失败: {str(e)}')
+
+        review_task['status'] = 'completed'
+
+    # ===== 阶段4: 开发者修复问题 =====
+    fix_task = next((t for t in project['tasks'] if t.get('is_fix_task')), None)
+    if fix_task and fix_task['status'] == 'pending':
+        fix_task['status'] = 'in_progress'
+        send_ai_message(project, 'coder', f'🔧 **执行 [{fix_task["id"]}] {fix_task["title"]}...**')
+
+        try:
+            # 调用AI修复问题
+            fix_result = executor.fix_issues(
+                project.get('pending_fixes', []),
+                project.get('generated_code', '')
+            )
+            project['generated_code'] = fix_result  # 更新代码
+            send_ai_message(project, 'coder', f'🔧 **AI修复结果:**\n\n```python\n{fix_result}\n```')
+        except Exception as e:
+            send_ai_message(project, 'coder', f'⚠️ 代码修复失败: {str(e)}')
+
+        fix_task['status'] = 'completed'
+
+    # ===== 阶段5: 测试工程师生成测试 =====
+    test_task = next((t for t in project['tasks'] if t['assignee'] == 'tester'), None)
+    if test_task:
+        test_task['status'] = 'in_progress'
+        send_ai_message(project, 'tester', f'🧪 **执行 [{test_task["id"]}] {test_task["title"]}...**')
+
+        try:
+            # 调用AI生成测试
+            test_result = executor.generate_tests(project.get('generated_code', ''))
+            send_ai_message(project, 'tester', f'🧪 **AI生成的测试:**\n\n```python\n{test_result}\n```')
+        except Exception as e:
+            send_ai_message(project, 'tester', f'⚠️ 测试生成失败: {str(e)}')
+
+        test_task['status'] = 'completed'
+
+    # ===== 完成 =====
+    completion_msg = '✅ **全部任务完成!**\n\n📋 **任务状态:**\n\n'
+    for t in project['tasks']:
+        status_icon = {'pending': '☐', 'in_progress': '◐', 'completed': '☑'}.get(t['status'], '?')
+        completion_msg += f'{status_icon} [{t["id"]}] {t["title"]} - {t["status"]}\n'
+    send_ai_message(project, 'orchestrator', completion_msg)
+
+    project['status'] = 'idle'
 
 
 @app.route('/api/projects/<project_id>/stream')
@@ -355,6 +653,12 @@ def process_project_message(project_id, content, is_interrupt=False):
     import time
     project = state.projects[project_id]
 
+    # 初始化任务列表
+    if 'tasks' not in project:
+        project['tasks'] = []
+    if 'pending_fixes' not in project:
+        project['pending_fixes'] = []
+
     if is_interrupt:
         # 打断处理
         time.sleep(0.5)
@@ -371,33 +675,168 @@ def process_project_message(project_id, content, is_interrupt=False):
         project['status'] = 'idle'
         return
 
+    # 任务定义 - 结构化子任务列表
+    task_definitions = [
+        {
+            'id': 't1',
+            'title': '用户模块开发',
+            'description': '实现用户认证、注册、个人信息管理',
+            'assignee': 'coder',
+            'assigneeName': '👨‍💻 开发者',
+            'status': 'pending',
+            'depends_on': [],
+            'sub_tasks': [
+                '实现 src/main.py Flask应用',
+                '创建 src/models/user.py 用户模型',
+                '编写 src/utils/auth.py 认证工具'
+            ]
+        },
+        {
+            'id': 't2',
+            'title': '代码审查',
+            'description': '审查用户模块代码质量和安全性',
+            'assignee': 'reviewer',
+            'assigneeName': '🔍 审查员',
+            'status': 'pending',
+            'depends_on': ['t1'],
+            'sub_tasks': [
+                '审查 src/models/user.py',
+                '审查 src/utils/auth.py',
+                '审查 src/main.py'
+            ]
+        },
+        {
+            'id': 't3',
+            'title': '修复审查问题',
+            'description': '根据审查反馈修复发现的问题',
+            'assignee': 'coder',
+            'assigneeName': '👨‍💻 开发者',
+            'status': 'pending',
+            'depends_on': ['t2'],
+            'is_fix_task': True,
+            'sub_tasks': []
+        },
+        {
+            'id': 't4',
+            'title': '编写测试用例',
+            'description': '为用户模块编写单元测试和集成测试',
+            'assignee': 'tester',
+            'assigneeName': '🧪 测试工程师',
+            'status': 'pending',
+            'depends_on': ['t3'],
+            'sub_tasks': [
+                '创建 tests/test_user.py',
+                '创建 tests/test_auth.py',
+                '执行测试并生成报告'
+            ]
+        },
+        {
+            'id': 't5',
+            'title': 'Docker部署配置',
+            'description': '配置Docker镜像构建和部署',
+            'assignee': 'builder',
+            'assigneeName': '🏗️ 构建工程师',
+            'status': 'pending',
+            'depends_on': ['t4'],
+            'sub_tasks': [
+                '创建 Dockerfile',
+                '创建 docker-compose.yml',
+                '执行镜像构建'
+            ]
+        }
+    ]
+
     # 详细的文件操作进展汇报 - 包含具体代码和内容
+    # Orchestrator消息 - 包含任务分解
+    def generate_orchestrator_task_list(tasks):
+        """生成带checkbox的任务列表"""
+        lines = ['📋 任务分解:\n']
+        for t in tasks:
+            checkbox = '☐' if t['status'] == 'pending' else ('◐' if t['status'] == 'in_progress' else '☑')
+            lines.append(f'{checkbox} **[{t["id"]}] {t["title"]}**')
+            lines.append(f'    👤 负责人: {t["assigneeName"]}')
+            lines.append(f'    📝 {t["description"]}')
+            if t['sub_tasks']:
+                for st in t['sub_tasks']:
+                    lines.append(f'       • {st}')
+            lines.append('')
+        return '\n'.join(lines)
+
+    def generate_fix_task_message(fixes):
+        """生成修复任务消息"""
+        lines = ['⚠️ **需要修复的问题:**\n']
+        for i, fix in enumerate(fixes, 1):
+            lines.append(f'{i}. {fix["file"]}:{fix["line"]}')
+            lines.append(f'   问题: {fix["issue"]}')
+            lines.append(f'   建议: {fix["suggestion"]}')
+            lines.append('')
+        return '\n'.join(lines)
+
+    def get_available_tasks(project):
+        """获取当前可执行的任务（依赖已完成的）"""
+        available = []
+        completed_ids = [t['id'] for t in project['tasks'] if t['status'] == 'completed']
+        for t in project['tasks']:
+            if t['status'] == 'pending':
+                deps = t.get('depends_on', [])
+                if all(d in completed_ids for d in deps):
+                    available.append(t)
+        return available
+
+    def update_task_status(project, task_id, status, agent_id=None):
+        """更新任务状态"""
+        for t in project['tasks']:
+            if t['id'] == task_id:
+                t['status'] = status
+                if agent_id:
+                    t['executed_by'] = agent_id
+                return t
+        return None
+
+    # 初始化任务列表到项目状态
+    project['tasks'] = [t.copy() for t in task_definitions]
+    project['pending_fixes'] = []
+
+    # Agent消息模板 - 包含任务相关的进展汇报
     agent_responses = {
         'orchestrator': [
             '🎯 正在分析任务需求，理解业务逻辑...',
-            '''📋 任务已分解为以下子任务:
+            '''📋 任务分解完成:
 
-   ✅ 前端页面开发
-      - 登录表单组件
-      - 用户信息展示
-      - 权限验证UI
+项目: 用户认证模块
 
-   ✅ 后端API实现
-      - 用户认证接口 /api/auth/login
-      - Token刷新机制
-      - 密码加密存储
+☐ **[t1] 用户模块开发**
+   👤 负责人: 👨‍💻 开发者
+   📝 实现用户认证、注册、个人信息管理
+   • 实现 src/main.py Flask应用
+   • 创建 src/models/user.py 用户模型
+   • 编写 src/utils/auth.py 认证工具
 
-   ✅ 数据库设计
-      - users 表结构
-      - sessions 会话管理
-      - 权限关系表''',
-            '📊 预计完成时间: 约30分钟',
-            '✅ 任务分配完成，各Agent开始执行'
+☐ **[t2] 代码审查**
+   👤 负责人: 🔍 审查员
+   📝 审查用户模块代码质量和安全性
+
+☐ **[t3] 修复审查问题** (等待审查完成)
+   👤 负责人: 👨‍💻 开发者
+   📝 根据审查反馈修复发现的问题
+
+☐ **[t4] 编写测试用例**
+   👤 负责人: 🧪 测试工程师
+   📝 为用户模块编写单元测试和集成测试
+
+☐ **[t5] Docker部署配置**
+   👤 负责人: 🏗️ 构建工程师
+   📝 配置Docker镜像构建和部署
+
+📊 预计完成时间: 约30分钟
+✅ 任务分配完成，各Agent开始执行''',
         ],
         'coder': [
-            '''💻 正在编写 src/main.py...
+            '''👨‍💻 **正在执行 [t1] 用户模块开发...**
 
-📄 文件: src/main.py
+☐ [t1] 用户模块开发 → ◐ 进行中
+
+📄 创建文件: src/main.py
 ```python
 from flask import Flask, request, jsonify
 from auth import verify_token
@@ -411,9 +850,7 @@ def login():
     password = data.get('password')
     # 验证用户...
     return jsonify({'token': 'xxx'})
-```
-完成度: 45%''',
-
+```''',
             '''📝 创建文件: src/models/user.py
 
 📄 文件: src/models/user.py
@@ -430,8 +867,9 @@ class User(db.Model):
             'username': self.username,
             'email': self.email
         }
-```''',
+```
 
+✅ 子任务完成: 创建 src/models/user.py 用户模型''',
             '''📝 创建文件: src/utils/auth.py
 
 📄 文件: src/utils/auth.py
@@ -447,8 +885,9 @@ def hash_password(password: str) -> str:
 def verify_password(password: str, hash: str) -> bool:
     # 验证逻辑...
     return True
-```''',
+```
 
+✅ 子任务完成: 编写 src/utils/auth.py 认证工具''',
             '''🔧 修改: src/config.json
 
 📄 文件: src/config.json
@@ -466,31 +905,20 @@ def verify_password(password: str, hash: str) -> bool:
 }
 ```
 已添加数据库和安全配置''',
-
-            '''🔧 修改: src/auth.py 的登录逻辑
-
-📄 文件: src/auth.py (diff)
-```diff
-- def login(username, password):
--     return True
-
-+ def login(username, password):
-+     user = User.query.filter_by(username=username).first()
-+     if not user or not verify_password(password, user.password_hash):
-+         raise AuthError("Invalid credentials")
-+     return generate_token(user)
-```''',
-
-            '''✅ 已完成用户模块核心代码
+            '''✅ **[t1] 用户模块开发** 已完成!
 
 📊 统计:
    - 新增文件: 3个
    - 修改文件: 2个
    - 代码行数: +186行
-   - 测试覆盖: 待审查'''
+   - 状态: ☐ [t1] → ☑ [t1]
+
+➡️ 通知项目经理: t1已完成，准备进入t2代码审查阶段''',
         ],
         'reviewer': [
-            '''🔍 正在审查代码...
+            '''🔍 **正在执行 [t2] 代码审查...**
+
+☐ [t2] 代码审查 → ◐ 进行中
 
 审查范围:
    - src/models/user.py
@@ -518,31 +946,95 @@ def verify_password(password: str, hash: str) -> bool:
 ⚠️ 建议:
    - 第8行: 可以添加密码强度验证
    - 建议添加账户锁定机制''',
-            '''⚠️ 发现的问题汇总:
+            '''⚠️ **发现的问题汇总:**
 
-   1. src/models/user.py:15
-      问题: email 字段缺少唯一性约束
-      建议: 添加 unique=True
+1. src/models/user.py:15
+   问题: email 字段缺少唯一性约束
+   建议: 添加 unique=True
 
-   2. src/utils/auth.py:20
-      问题: 缺少登录失败次数限制
-      建议: 添加账户锁定机制
+2. src/utils/auth.py:20
+   问题: 缺少登录失败次数限制
+   建议: 添加账户锁定机制
 
-   3. src/main.py:25
-      问题: 错误处理不够完善
-      建议: 添加具体的错误码''',
-            '''✅ 审查完成，代码质量评分: 85/100
+3. src/main.py:25
+   问题: 错误处理不够完善
+   建议: 添加具体的错误码''',
+            '''📋 **审查完成，自动生成修复任务 [t3]**
 
-主要优点:
-   - 架构清晰，模块化良好
-   - 安全实践符合标准
-   - 代码可读性高
+🔧 修复任务详情:
+   • [t3-1] src/models/user.py:15 - 添加 email 唯一性约束
+   • [t3-2] src/utils/auth.py:20 - 添加账户锁定机制
+   • [t3-3] src/main.py:25 - 完善错误处理
 
-待优化:
-   - 3处小问题需要修复'''
+👤 负责人: 👨‍💻 开发者
+⏳ 依赖: [t2] 代码审查 (当前)
+✅ 状态: ☐ [t3] → 等待开发者执行
+
+➡️ 通知项目经理: t2已完成，发现3个问题需要开发者修复''',
+        ],
+        'coder_fix': [
+            '''🔧 **执行 [t3] 修复审查问题...**
+
+☐ [t3] 修复审查问题 → ◐ 进行中
+
+根据审查反馈修复3个问题:
+
+📄 [t3-1] 修复 src/models/user.py:15 - 添加 email 唯一性约束
+```python
+# 修改前
+email = db.Column(db.String(120))
+
+# 修改后
+email = db.Column(db.String(120), unique=True)
+```''',
+            '''📄 [t3-2] 修复 src/utils/auth.py - 添加账户锁定机制
+```python
+MAX_LOGIN_ATTEMPTS = 5
+LOCKOUT_DURATION = 300  # 5分钟
+
+class AccountLockout:
+    def __init__(self):
+        self.attempts = {}
+
+    def record_failure(self, username):
+        self.attempts[username] = self.attempts.get(username, 0) + 1
+        if self.attempts[username] >= MAX_LOGIN_ATTEMPTS:
+            return True  # 账户被锁定
+        return False
+
+    def reset(self, username):
+        self.attempts[username] = 0
+```''',
+            '''📄 [t3-3] 修复 src/main.py:25 - 完善错误处理
+```python
+class ErrorCode:
+    AUTH_INVALID_CREDENTIALS = 1001
+    AUTH_ACCOUNT_LOCKED = 1002
+    AUTH_TOKEN_EXPIRED = 1003
+    VALIDATION_ERROR = 2001
+    INTERNAL_ERROR = 5001
+
+def handle_error(error_code, message):
+    return jsonify({
+        'error': {
+            'code': error_code,
+            'message': message
+        }
+    }), get_http_status(error_code)
+```''',
+            '''✅ **[t3] 修复审查问题** 已完成!
+
+📊 修复统计:
+   - 修复文件: 3个
+   - 修复问题: 3个 (100%)
+   - 状态: ☐ [t3] → ☑ [t3]
+
+➡️ 通知项目经理: t3已完成，代码已按审查意见修复''',
         ],
         'tester': [
-            '''🧪 正在编写测试用例...
+            '''🧪 **正在执行 [t4] 编写测试用例...**
+
+☐ [t4] 编写测试用例 → ◐ 进行中
 
 测试计划:
    - 单元测试: 15个
@@ -589,18 +1081,22 @@ class TestAuth:
 ✅ test_user.py::TestUserModel::test_password_hashing PASSED
 ✅ test_auth.py::TestAuth::test_login_success PASSED
 ✅ test_auth.py::TestAuth::test_login_failure PASSED''',
-            '''✅ 所有测试通过!
+            '''✅ **[t4] 编写测试用例** 已完成!
 
 📊 测试报告:
    - 总测试数: 23个
    - 通过: 23个 (100%)
    - 失败: 0个
    - 跳过: 0个
+   - 状态: ☐ [t4] → ☑ [t4]
 
-⏱️ 总耗时: 1.2秒'''
+⏱️ 总耗时: 1.2秒
+➡️ 通知项目经理: t4已完成，所有测试通过''',
         ],
         'builder': [
-            '''🔧 正在配置构建环境...
+            '''🏗️ **正在执行 [t5] Docker部署配置...**
+
+☐ [t5] Docker部署配置 → ◐ 进行中
 
 构建配置:
    - Docker镜像构建
@@ -654,29 +1150,72 @@ Step 6/7 : RUN pip install gunicorn
 Step 7/7 : CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:8080", "app:app"]
 Successfully built abc123
 Successfully tagged myapp:latest''',
-            '''✅ 构建成功!
+            '''✅ **[t5] Docker部署配置** 已完成!
 
 📊 构建统计:
    - 镜像名称: myapp:latest
    - 镜像大小: 245MB
    - 构建时间: 45秒
-   - 层数: 7层
+   - 状态: ☐ [t5] → ☑ [t5]
 
 🚀 可以使用以下命令启动:
-   docker-compose up -d'''
+   docker-compose up -d
+
+📋 **全部任务完成!**
+
+☑ [t1] 用户模块开发
+☑ [t2] 代码审查
+☑ [t3] 修复审查问题
+☑ [t4] 编写测试用例
+☑ [t5] Docker部署配置
+
+✅ 项目整体完成率: 100%''',
         ],
     }
 
-    # 模拟Agent协作
+    # 定义Agent执行顺序（基于任务依赖关系）
+    agent_execution_order = [
+        # 阶段1: 开发者执行t1
+        {'agent': 'coder', 'task_id': 't1'},
+        # 阶段2: 审查员执行t2（依赖t1）
+        {'agent': 'reviewer', 'task_id': 't2'},
+        # 阶段3: 开发者执行t3修复（依赖t2）
+        {'agent': 'coder', 'task_id': 't3'},
+        # 阶段4: 测试工程师执行t4（依赖t3）
+        {'agent': 'tester', 'task_id': 't4'},
+        # 阶段5: 构建工程师执行t5（依赖t4）
+        {'agent': 'builder', 'task_id': 't5'},
+    ]
+
+    # 模拟Agent协作 - 按任务顺序执行
     agents = project.get('agents', [])
-    for i, agent in enumerate(agents):
-        if agent['id'] == 'user':
+
+    # 创建Agent映射
+    agent_map = {a['id']: a for a in agents}
+
+    for exec_item in agent_execution_order:
+        agent_id = exec_item['agent']
+        task_id = exec_item['task_id']
+        agent = agent_map.get(agent_id)
+
+        if not agent:
             continue
 
-        agent['status'] = 'working'
+        # 获取该Agent的消息（包含任务执行）
+        messages = agent_responses.get(agent_id, [f'{agent["name"]} 正在处理...'])
 
-        # 获取该Agent的详细进展消息
-        messages = agent_responses.get(agent['id'], [f'{agent["name"]} 正在处理...'])
+        # 如果是修复任务(t3)，使用t3特定的消息
+        if task_id == 't3':
+            messages = agent_responses.get('coder_fix', [f'{agent["name"]} 正在修复审查问题...'])
+
+        # 更新任务状态为进行中
+        for t in project['tasks']:
+            if t['id'] == task_id:
+                t['status'] = 'in_progress'
+                t['executed_by'] = agent_id
+                break
+
+        agent['status'] = 'working'
 
         for idx, msg_content in enumerate(messages):
             time.sleep(0.5)
@@ -694,13 +1233,20 @@ Successfully tagged myapp:latest''',
                 'timestamp': __import__('datetime').datetime.now().isoformat(),
                 'status': 'working',
                 'progress': progress,
+                'task_id': task_id,  # 关联任务ID
             }
             project['messages'].append(msg)
 
             # 更新Agent进度
             agent['progress'] = progress
 
-        # 完成
+        # 任务完成
+        for t in project['tasks']:
+            if t['id'] == task_id:
+                t['status'] = 'completed'
+                t['completed_by'] = agent_id
+                break
+
         agent['status'] = 'completed'
         agent['progress'] = 100
 

@@ -112,6 +112,21 @@ function initEventListeners() {
 
     // 搜索项目
     elements.projectSearch.addEventListener('input', filterProjects);
+
+    // AI模式切换
+    elements.aiModeToggle = document.getElementById('aiModeToggle');
+    elements.aiStatus = document.getElementById('aiStatus');
+    if (elements.aiModeToggle) {
+        elements.aiModeToggle.addEventListener('change', toggleAIMode);
+    }
+}
+
+function toggleAIMode() {
+    const isActive = elements.aiModeToggle.checked;
+    if (elements.aiStatus) {
+        elements.aiStatus.textContent = isActive ? 'AI模式' : '模拟模式';
+        elements.aiStatus.classList.toggle('active', isActive);
+    }
 }
 
 // ===================================
@@ -612,11 +627,14 @@ async function handleInterrupt(content) {
 }
 
 async function sendToBackend(content) {
+    // 获取AI模式状态
+    const useAI = elements.aiModeToggle && elements.aiModeToggle.checked;
+
     try {
         const response = await fetch(`/api/projects/${state.currentProjectId}/messages`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ content }),
+            body: JSON.stringify({ content, useAI }),
         });
 
         const result = await response.json();
