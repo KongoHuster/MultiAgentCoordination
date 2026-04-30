@@ -371,44 +371,81 @@ def process_project_message(project_id, content, is_interrupt=False):
         project['status'] = 'idle'
         return
 
+    # 详细的文件操作进展汇报
+    agent_responses = {
+        'orchestrator': [
+            '🎯 正在分析任务需求...',
+            '📋 任务已分解为:\n   • 前端页面开发\n   • 后端API实现\n   • 数据库设计',
+            '📊 预计总进度: ████░░░░░░ 40%',
+            '✅ 任务分配完成，等待执行'
+        ],
+        'coder': [
+            '💻 正在编写 src/main.py...',
+            '📝 创建文件: src/models/user.py',
+            '📝 创建文件: src/utils/auth.py',
+            '🔧 修改: src/config.json 添加数据库配置',
+            '🔧 修改: src/auth.py 的登录逻辑',
+            '✅ 已完成用户模块核心代码'
+        ],
+        'reviewer': [
+            '🔍 正在审查代码...',
+            '📂 审查文件: src/models/user.py',
+            '⚠️ 建议优化: user.py 第23行可以使用缓存',
+            '⚠️ 建议优化: auth.py 缺少错误处理',
+            '✅ 审查通过，代码质量良好'
+        ],
+        'tester': [
+            '🧪 正在编写测试用例...',
+            '📝 创建文件: tests/test_user.py',
+            '📝 创建文件: tests/test_auth.py',
+            '🔄 运行单元测试中...',
+            '✅ 12个测试用例全部通过'
+        ],
+        'builder': [
+            '🔧 正在配置构建环境...',
+            '📝 创建文件: Dockerfile',
+            '📝 创建文件: docker-compose.yml',
+            '🔨 执行构建命令: npm run build',
+            '✅ 构建成功，镜像大小: 245MB'
+        ],
+    }
+
     # 模拟Agent协作
     agents = project.get('agents', [])
     for i, agent in enumerate(agents):
         if agent['id'] == 'user':
             continue
 
-        time.sleep(0.8)
-
-        # 更新进度
         agent['status'] = 'working'
 
-        responses = {
-            'orchestrator': f'🎯 正在分析任务：{content}',
-            'coder': f'💻 开始编写代码，实现功能模块...',
-            'reviewer': f'🔍 代码审查中，发现1处可优化点...',
-            'tester': f'🧪 开始编写测试用例，覆盖核心逻辑...',
-            'builder': f'🔧 构建配置完成，准备部署...',
-        }
+        # 获取该Agent的详细进展消息
+        messages = agent_responses.get(agent['id'], [f'{agent["name"]} 正在处理...'])
 
-        msg = {
-            'id': f'msg-{len(project["messages"]) + 1}',
-            'agent': agent['id'],
-            'agentName': agent['name'],
-            'agentIcon': agent['icon'],
-            'agentColor': agent.get('color', '#6b7280'),
-            'content': responses.get(agent['id'], f'{agent["name"]} 正在处理...'),
-            'timestamp': __import__('datetime').datetime.now().isoformat(),
-            'status': 'working',
-            'progress': 25,
-        }
-        project['messages'].append(msg)
+        for idx, msg_content in enumerate(messages):
+            time.sleep(0.5)
 
-        # 模拟进度更新
-        for progress in [50, 75, 100]:
-            time.sleep(0.6)
+            # 计算进度
+            progress = int((idx + 1) / len(messages) * 100)
+
+            msg = {
+                'id': f'msg-{len(project["messages"]) + 1}',
+                'agent': agent['id'],
+                'agentName': agent['name'],
+                'agentIcon': agent['icon'],
+                'agentColor': agent.get('color', '#6b7280'),
+                'content': msg_content,
+                'timestamp': __import__('datetime').datetime.now().isoformat(),
+                'status': 'working',
+                'progress': progress,
+            }
+            project['messages'].append(msg)
+
+            # 更新Agent进度
             agent['progress'] = progress
-            if progress == 100:
-                agent['status'] = 'completed'
+
+        # 完成
+        agent['status'] = 'completed'
+        agent['progress'] = 100
 
     project['status'] = 'idle'
 

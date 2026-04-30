@@ -457,6 +457,11 @@ function renderAgentStatusBar() {
             <span class="agent-status-indicator ${agent.status || 'idle'}"></span>
         `;
 
+        // 点击Agent卡片打开详情面板
+        card.addEventListener('click', () => {
+            openAgentDetailPanel(agent.id);
+        });
+
         elements.agentStatusBar.appendChild(card);
     });
 }
@@ -847,6 +852,74 @@ function handleInputKeydown(e) {
 
 function toggleAgentPanel() {
     elements.agentPanel.classList.toggle('open');
+}
+
+// ===================================
+// Agent详情面板
+// ===================================
+
+function openAgentDetailPanel(agentId) {
+    const agent = state.agents.find(a => a.id === agentId);
+    if (!agent) return;
+
+    // 获取该Agent的所有消息
+    const agentMessages = state.messages.filter(m => m.agent === agentId);
+
+    // 渲染面板内容
+    renderAgentDetailContent(agent, agentMessages);
+
+    // 打开面板
+    elements.agentPanel.classList.add('open');
+}
+
+function renderAgentDetailContent(agent, messages) {
+    const statsHtml = `
+        <div class="agent-stats">
+            <div class="stat-item">
+                <span class="stat-value">${messages.length}</span>
+                <span class="stat-label">消息数</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-value">${agent.progress || 0}%</span>
+                <span class="stat-label">完成度</span>
+            </div>
+        </div>
+    `;
+
+    const historyHtml = messages.length > 0
+        ? messages.map(msg => `
+            <div class="history-item">
+                <div class="history-header">
+                    <span class="history-time">${formatTime(msg.timestamp)}</span>
+                    <span class="history-progress">${msg.progress !== undefined ? msg.progress + '%' : ''}</span>
+                </div>
+                <div class="history-content">${escapeHtml(msg.content).replace(/\n/g, '<br>')}</div>
+            </div>
+        `).join('')
+        : '<p class="no-history">暂无历史记录</p>';
+
+    elements.agentList.innerHTML = `
+        <div class="agent-detail-header">
+            <div class="agent-avatar-lg" style="background: ${getAgentColor(agent.id)}">
+                ${agent.icon || '👤'}
+            </div>
+            <div class="agent-info">
+                <h3>${agent.name || agent.id}</h3>
+                <span class="agent-badge ${agent.status}">${getAgentStatusText(agent.status)}</span>
+            </div>
+        </div>
+        ${statsHtml}
+        <div class="agent-history">
+            <h4>📜 历史记录</h4>
+            <div class="history-list">
+                ${historyHtml}
+            </div>
+        </div>
+    `;
+}
+
+function closeAgentDetailPanel() {
+    elements.agentPanel.classList.remove('open');
 }
 
 // ===================================
