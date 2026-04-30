@@ -32,6 +32,9 @@ class AppState:
         self.workflow_thread = None
         self.pause_event = threading.Event()  # 用于暂停控制
         self.pause_event.set()  # 默认不暂停
+        # 多项目支持
+        self.projects = {}
+        self.current_project_id = None
 
 state = AppState()
 
@@ -183,6 +186,231 @@ def resume_workflow():
         })
         return jsonify({'status': 'resumed'})
     return jsonify({'error': '任务未暂停'}), 400
+
+
+# ========== 多项目 API ==========
+
+@app.route('/api/projects', methods=['GET'])
+def get_projects():
+    """获取所有项目列表"""
+    projects_list = [
+        {
+            'id': pid,
+            'name': p.get('name', '未命名项目'),
+            'icon': p.get('icon', '📁'),
+            'status': p.get('status', 'idle'),
+            'agents': p.get('agents', []),
+        }
+        for pid, p in state.projects.items()
+    ]
+    return jsonify({'projects': projects_list})
+
+
+@app.route('/api/projects', methods=['POST'])
+def create_project():
+    """创建新项目"""
+    data = request.json
+    name = data.get('name', '新项目')
+    agent_types = data.get('agents', ['orchestrator', 'coder'])
+
+    project_id = f"project-{len(state.projects) + 1}"
+
+    # 角色配置
+    agent_configs = {
+        'orchestrator': {'id': 'orchestrator', 'name': '项目经理', 'icon': '🎯', 'status': 'idle', 'progress': 0},
+        'coder': {'id': 'coder', 'name': '开发者', 'icon': '💻', 'status': 'idle', 'progress': 0},
+        'reviewer': {'id': 'reviewer', 'name': '审查员', 'icon': '🔍', 'status': 'idle', 'progress': 0},
+        'tester': {'id': 'tester', 'name': '测试员', 'icon': '🧪', 'status': 'idle', 'progress': 0},
+        'builder': {'id': 'builder', 'name': '构建师', 'icon': '🔧', 'status': 'idle', 'progress': 0},
+    }
+
+    icons = ['📁', '🌐', '🔌', '📱', '💻', '🎯', '🚀', '⚡']
+
+    project = {
+        'id': project_id,
+        'name': name,
+        'icon': icons[len(state.projects) % len(icons)],
+        'status': 'idle',
+        'agents': [agent_configs.get(t, {'id': t, 'name': t, 'icon': '👤', 'status': 'idle', 'progress': 0}) for t in agent_types],
+        'messages': [],
+    }
+
+    state.projects[project_id] = project
+    return jsonify({'success': True, 'project': project}), 201
+
+
+@app.route('/api/projects/<project_id>', methods=['DELETE'])
+def delete_project(project_id):
+    """删除项目"""
+    if project_id in state.projects:
+        del state.projects[project_id]
+        return jsonify({'success': True})
+    return jsonify({'error': '项目不存在'}), 404
+
+
+@app.route('/api/projects/<project_id>/messages', methods=['GET'])
+def get_project_messages(project_id):
+    """获取项目消息历史"""
+    if project_id not in state.projects:
+        return jsonify({'error': '项目不存在'}), 404
+    return jsonify({'messages': state.projects[project_id].get('messages', [])})
+
+
+@app.route('/api/projects/<project_id>/messages', methods=['POST'])
+def send_project_message(project_id):
+    """向项目发送消息"""
+    if project_id not in state.projects:
+        return jsonify({'error': '项目不存在'}), 404
+
+    data = request.json
+    content = data.get('content', '')
+    is_interrupt = data.get('isInterrupt', False)
+
+    # 添加用户消息
+    user_msg = {
+        'id': f'msg-{len(state.projects[project_id]["messages"]) + 1}',
+        'agent': 'user',
+        'agentName': '我',
+        'agentIcon': '👤',
+        'agentColor': '#12b7f5',
+        'content': content,
+        'timestamp': __import__('datetime').datetime.now().isoformat(),
+        'isInterrupt': is_interrupt,
+    }
+    state.projects[project_id]['messages'].append(user_msg)
+
+    # 更新项目状态
+    state.projects[project_id]['status'] = 'running'
+
+    # 后台处理消息
+    thread = threading.Thread(target=process_project_message, args=(project_id, content, is_interrupt))
+    thread.daemon = True
+    thread.start()
+
+    return jsonify({'success': True, 'message': user_msg})
+
+
+@app.route('/api/projects/<project_id>/stream')
+def project_stream(project_id):
+    """SSE流，推送项目进度更新"""
+    from flask import Response
+
+    if project_id not in state.projects:
+        return '', 404
+
+    def generate():
+        project = state.projects[project_id]
+        last_msg_count = len(project.get('messages', []))
+
+        while True:
+            messages = project.get('messages', [])
+            if len(messages) > last_msg_count:
+                for msg in messages[last_msg_count:]:
+                    yield f"data: {json.dumps(msg, ensure_ascii=False)}\n\n"
+                last_msg_count = len(messages)
+
+            if project.get('status') == 'idle' and len(messages) > 0 and last_msg_count == len(messages):
+                yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+                break
+
+            import time
+            time.sleep(0.5)
+
+    return Response(generate(), mimetype='text/event-stream')
+
+
+@app.route('/api/projects/<project_id>/interrupt', methods=['POST'])
+def interrupt_project(project_id):
+    """打断项目执行"""
+    if project_id not in state.projects:
+        return jsonify({'error': '项目不存在'}), 404
+
+    data = request.json
+    message = data.get('message', '')
+
+    # 重置所有Agent状态
+    project = state.projects[project_id]
+    for agent in project.get('agents', []):
+        agent['status'] = 'idle'
+        agent['progress'] = 0
+
+    # 添加打断消息
+    interrupt_msg = {
+        'id': f'msg-{len(project["messages"]) + 1}',
+        'agent': 'user',
+        'agentName': '我 (打断)',
+        'agentIcon': '👤',
+        'agentColor': '#faad14',
+        'content': f'⚡ {message}',
+        'timestamp': __import__('datetime').datetime.now().isoformat(),
+        'isInterrupt': True,
+    }
+    project['messages'].append(interrupt_msg)
+
+    return jsonify({'success': True, 'message': interrupt_msg})
+
+
+def process_project_message(project_id, content, is_interrupt=False):
+    """后台处理项目消息"""
+    import time
+    project = state.projects[project_id]
+
+    if is_interrupt:
+        # 打断处理
+        time.sleep(0.5)
+        msg = {
+            'id': f'msg-{len(project["messages"]) + 1}',
+            'agent': 'orchestrator',
+            'agentName': '项目经理',
+            'agentIcon': '🎯',
+            'agentColor': '#8b5cf6',
+            'content': f'收到您的打断："{content}"，正在调整任务...',
+            'timestamp': __import__('datetime').datetime.now().isoformat(),
+        }
+        project['messages'].append(msg)
+        project['status'] = 'idle'
+        return
+
+    # 模拟Agent协作
+    agents = project.get('agents', [])
+    for i, agent in enumerate(agents):
+        if agent['id'] == 'user':
+            continue
+
+        time.sleep(0.8)
+
+        # 更新进度
+        agent['status'] = 'working'
+
+        responses = {
+            'orchestrator': f'🎯 正在分析任务：{content}',
+            'coder': f'💻 开始编写代码，实现功能模块...',
+            'reviewer': f'🔍 代码审查中，发现1处可优化点...',
+            'tester': f'🧪 开始编写测试用例，覆盖核心逻辑...',
+            'builder': f'🔧 构建配置完成，准备部署...',
+        }
+
+        msg = {
+            'id': f'msg-{len(project["messages"]) + 1}',
+            'agent': agent['id'],
+            'agentName': agent['name'],
+            'agentIcon': agent['icon'],
+            'agentColor': agent.get('color', '#6b7280'),
+            'content': responses.get(agent['id'], f'{agent["name"]} 正在处理...'),
+            'timestamp': __import__('datetime').datetime.now().isoformat(),
+            'status': 'working',
+            'progress': 25,
+        }
+        project['messages'].append(msg)
+
+        # 模拟进度更新
+        for progress in [50, 75, 100]:
+            time.sleep(0.6)
+            agent['progress'] = progress
+            if progress == 100:
+                agent['status'] = 'completed'
+
+    project['status'] = 'idle'
 
 
 # ========== 历史记录 API ==========

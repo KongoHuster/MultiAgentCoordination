@@ -3,88 +3,218 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>多Agent协作系统</title>
+    <title>MultiAgent协作 - QQ风格多项目聊天</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <div class="app-container">
-        <!-- 头部 -->
-        <header class="app-header">
-            <div class="header-left">
-                <span class="app-icon">🤖</span>
-                <h1 class="app-title">多Agent协作系统</h1>
-            </div>
-            <div class="header-right">
-                <span class="status-indicator" id="statusIndicator">
-                    <span class="status-dot"></span>
-                    <span class="status-text">就绪</span>
-                </span>
-                <button class="control-button pause-button" id="pauseButton" style="display: none;">
-                    ⏸️ 暂停
-                </button>
-                <button class="control-button resume-button" id="resumeButton" style="display: none;">
-                    ▶️ 继续
+    <div id="app">
+        <!-- 侧边栏 - 项目列表 -->
+        <aside id="sidebar">
+            <!-- 侧边栏头部 -->
+            <div class="sidebar-header">
+                <h2 class="sidebar-title">项目列表</h2>
+                <button class="new-project-btn" id="newProjectBtn" title="新建项目">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <path d="M12 5v14M5 12h14"/>
+                    </svg>
                 </button>
             </div>
-        </header>
 
-        <!-- 主要内容区 -->
-        <main class="main-content">
-            <!-- 聊天区域 -->
-            <div class="chat-section">
-                <div class="chat-container" id="chatContainer">
-                    <!-- 欢迎消息 -->
-                    <div class="welcome-message">
-                        <div class="welcome-icon">🎯</div>
-                        <h2>欢迎使用多Agent协作系统</h2>
-                        <p>输入您的任务描述，AI Agent团队将协助您完成开发工作</p>
+            <!-- 搜索框 -->
+            <div class="search-box">
+                <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <circle cx="11" cy="11" r="8"/>
+                    <path d="m21 21-4.35-4.35"/>
+                </svg>
+                <input type="text" id="projectSearch" placeholder="搜索项目..." class="search-input">
+            </div>
+
+            <!-- 项目列表 -->
+            <div class="project-list" id="projectList">
+                <!-- 项目项将由JS动态生成 -->
+            </div>
+
+            <!-- 侧边栏底部统计 -->
+            <div class="sidebar-footer">
+                <div class="stat-row">
+                    <span class="stat-icon">👥</span>
+                    <span class="stat-label">在线</span>
+                    <span class="stat-value" id="onlineCount">0</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-icon">⏳</span>
+                    <span class="stat-label">等待</span>
+                    <span class="stat-value" id="waitingCount">0</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-icon">📊</span>
+                    <span class="stat-label">完成</span>
+                    <span class="stat-value" id="completedCount">0%</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- 主聊天区域 -->
+        <main id="mainContent">
+            <!-- 无项目时的欢迎界面 -->
+            <div class="welcome-panel" id="welcomePanel">
+                <div class="welcome-content">
+                    <div class="welcome-icon">🎯</div>
+                    <h2>欢迎使用 MultiAgent 协作系统</h2>
+                    <p>创建新项目开始多Agent协作，或选择一个现有项目</p>
+                    <button class="welcome-btn" id="welcomeNewProject">
+                        <span>+ 新建项目</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 聊天区域 (有项目时显示) -->
+            <div class="chat-panel" id="chatPanel" style="display: none;">
+                <!-- 聊天头部 -->
+                <div class="chat-header">
+                    <div class="chat-header-left">
+                        <span class="project-icon" id="currentProjectIcon">📁</span>
+                        <div class="project-info">
+                            <h3 class="project-name" id="currentProjectName">项目名称</h3>
+                            <span class="project-status" id="currentProjectStatus">就绪</span>
+                        </div>
                     </div>
+                    <div class="chat-header-right">
+                        <button class="header-btn" id="projectSettingsBtn" title="项目设置">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                <circle cx="12" cy="12" r="3"/>
+                                <path d="M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72 1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+                            </svg>
+                        </button>
+                        <button class="header-btn" id="toggleAgentPanel" title="角色面板">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                                <circle cx="9" cy="7" r="4"/>
+                                <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+                                <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Agent状态栏 -->
+                <div class="agent-status-bar" id="agentStatusBar">
+                    <!-- Agent状态卡片将由JS动态生成 -->
+                </div>
+
+                <!-- 消息容器 -->
+                <div class="message-container" id="messageContainer">
+                    <!-- 消息项将由JS动态生成 -->
                 </div>
 
                 <!-- 输入区域 -->
                 <div class="input-area">
-                    <div class="input-container">
+                    <div class="interrupt-hint" id="interruptHint" style="display: none;">
+                        <span class="interrupt-icon">⚡</span>
+                        <span>正在打断当前任务...</span>
+                    </div>
+                    <div class="input-wrapper">
                         <textarea
-                            id="taskInput"
-                            class="task-input"
-                            placeholder="描述您想要完成的任务，例如：创建一个待办事项管理应用..."
+                            id="messageInput"
+                            class="message-input"
+                            placeholder="输入消息随时打断Agent执行..."
                             rows="1"
                         ></textarea>
-                        <button class="send-button" id="sendButton">
-                            <svg class="send-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <button class="send-btn" id="sendBtn" title="发送">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
                                 <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
                             </svg>
                         </button>
                     </div>
-                    <div class="input-hint">
-                        按 <kbd>Enter</kbd> 发送，<kbd>Shift</kbd>+<kbd>Enter</kbd> 换行
+                    <div class="input-tips">
+                        <span>按 <kbd>Enter</kbd> 发送，<kbd>Shift</kbd>+<kbd>Enter</kbd> 换行</span>
+                        <span class="interrupt-tip">💡 可随时打断Agent补充信息</span>
                     </div>
                 </div>
             </div>
-
-            <!-- 侧边栏 -->
-            <aside class="sidebar" id="sidebar">
-                <div class="sidebar-header">
-                    <h3>任务进度</h3>
-                </div>
-                <div class="task-list" id="taskList">
-                    <div class="task-item task-empty">
-                        <span class="task-icon">📋</span>
-                        <span class="task-text">暂无任务</span>
-                    </div>
-                </div>
-                <div class="sidebar-stats">
-                    <div class="stat-item">
-                        <span class="stat-label">Agent状态</span>
-                        <span class="stat-value" id="agentStatus">等待中</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">通过率</span>
-                        <span class="stat-value" id="passRate">--</span>
-                    </div>
-                </div>
-            </aside>
         </main>
+
+        <!-- Agent详情面板 (右侧滑出) -->
+        <aside class="agent-panel" id="agentPanel">
+            <div class="agent-panel-header">
+                <h3>角色详情</h3>
+                <button class="close-agent-panel" id="closeAgentPanel">×</button>
+            </div>
+            <div class="agent-list" id="agentList">
+                <!-- Agent详情将由JS动态生成 -->
+            </div>
+        </aside>
+    </div>
+
+    <!-- 新建项目弹窗 -->
+    <div class="modal-overlay" id="newProjectModal" style="display: none;">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>新建项目</h3>
+                <button class="modal-close" id="closeNewProjectModal">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="projectNameInput">项目名称</label>
+                    <input type="text" id="projectNameInput" placeholder="输入项目名称..." class="form-input">
+                </div>
+                <div class="form-group">
+                    <label>选择角色</label>
+                    <div class="agent-selector" id="agentSelector">
+                        <label class="agent-option">
+                            <input type="checkbox" name="agent" value="orchestrator" checked>
+                            <span class="agent-checkbox"></span>
+                            <span class="agent-icon">🎯</span>
+                            <span class="agent-label">项目经理</span>
+                        </label>
+                        <label class="agent-option">
+                            <input type="checkbox" name="agent" value="coder" checked>
+                            <span class="agent-checkbox"></span>
+                            <span class="agent-icon">💻</span>
+                            <span class="agent-label">开发者</span>
+                        </label>
+                        <label class="agent-option">
+                            <input type="checkbox" name="agent" value="reviewer" checked>
+                            <span class="agent-checkbox"></span>
+                            <span class="agent-icon">🔍</span>
+                            <span class="agent-label">审查员</span>
+                        </label>
+                        <label class="agent-option">
+                            <input type="checkbox" name="agent" value="tester" checked>
+                            <span class="agent-checkbox"></span>
+                            <span class="agent-icon">🧪</span>
+                            <span class="agent-label">测试员</span>
+                        </label>
+                        <label class="agent-option">
+                            <input type="checkbox" name="agent" value="builder">
+                            <span class="agent-checkbox"></span>
+                            <span class="agent-icon">🔧</span>
+                            <span class="agent-label">构建师</span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="cancelNewProject">取消</button>
+                <button class="btn btn-primary" id="confirmNewProject">创建项目</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 删除项目确认弹窗 -->
+    <div class="modal-overlay" id="deleteProjectModal" style="display: none;">
+        <div class="modal modal-sm">
+            <div class="modal-header">
+                <h3>确认删除</h3>
+            </div>
+            <div class="modal-body">
+                <p>确定要删除项目 "<span id="deleteProjectName"></span>" 吗？此操作不可撤销。</p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="cancelDeleteProject">取消</button>
+                <button class="btn btn-danger" id="confirmDeleteProject">删除</button>
+            </div>
+        </div>
     </div>
 
     <!-- 通知容器 -->
