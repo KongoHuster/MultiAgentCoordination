@@ -371,42 +371,299 @@ def process_project_message(project_id, content, is_interrupt=False):
         project['status'] = 'idle'
         return
 
-    # 详细的文件操作进展汇报
+    # 详细的文件操作进展汇报 - 包含具体代码和内容
     agent_responses = {
         'orchestrator': [
-            '🎯 正在分析任务需求...',
-            '📋 任务已分解为:\n   • 前端页面开发\n   • 后端API实现\n   • 数据库设计',
-            '📊 预计总进度: ████░░░░░░ 40%',
-            '✅ 任务分配完成，等待执行'
+            '🎯 正在分析任务需求，理解业务逻辑...',
+            '''📋 任务已分解为以下子任务:
+
+   ✅ 前端页面开发
+      - 登录表单组件
+      - 用户信息展示
+      - 权限验证UI
+
+   ✅ 后端API实现
+      - 用户认证接口 /api/auth/login
+      - Token刷新机制
+      - 密码加密存储
+
+   ✅ 数据库设计
+      - users 表结构
+      - sessions 会话管理
+      - 权限关系表''',
+            '📊 预计完成时间: 约30分钟',
+            '✅ 任务分配完成，各Agent开始执行'
         ],
         'coder': [
-            '💻 正在编写 src/main.py...',
-            '📝 创建文件: src/models/user.py',
-            '📝 创建文件: src/utils/auth.py',
-            '🔧 修改: src/config.json 添加数据库配置',
-            '🔧 修改: src/auth.py 的登录逻辑',
-            '✅ 已完成用户模块核心代码'
+            '''💻 正在编写 src/main.py...
+
+📄 文件: src/main.py
+```python
+from flask import Flask, request, jsonify
+from auth import verify_token
+
+app = Flask(__name__)
+
+@app.route('/api/auth/login', methods=['POST'])
+def login():
+    data = request.json
+    username = data.get('username')
+    password = data.get('password')
+    # 验证用户...
+    return jsonify({'token': 'xxx'})
+```
+完成度: 45%''',
+
+            '''📝 创建文件: src/models/user.py
+
+📄 文件: src/models/user.py
+```python
+class User(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80), unique=True)
+    email = db.Column(db.String(120))
+    password_hash = db.Column(db.String(255))
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'username': self.username,
+            'email': self.email
+        }
+```''',
+
+            '''📝 创建文件: src/utils/auth.py
+
+📄 文件: src/utils/auth.py
+```python
+import hashlib
+import secrets
+
+def hash_password(password: str) -> str:
+    salt = secrets.token_hex(16)
+    return hashlib.pbkdf2_hmac('sha256',
+        password.encode(), salt.encode(), 100000)
+
+def verify_password(password: str, hash: str) -> bool:
+    # 验证逻辑...
+    return True
+```''',
+
+            '''🔧 修改: src/config.json
+
+📄 文件: src/config.json
+```json
+{
+  "database": {
+    "host": "localhost",
+    "port": 5432,
+    "name": "app_db"
+  },
+  "security": {
+    "jwt_secret": "generated_key_here",
+    "token_expire": 3600
+  }
+}
+```
+已添加数据库和安全配置''',
+
+            '''🔧 修改: src/auth.py 的登录逻辑
+
+📄 文件: src/auth.py (diff)
+```diff
+- def login(username, password):
+-     return True
+
++ def login(username, password):
++     user = User.query.filter_by(username=username).first()
++     if not user or not verify_password(password, user.password_hash):
++         raise AuthError("Invalid credentials")
++     return generate_token(user)
+```''',
+
+            '''✅ 已完成用户模块核心代码
+
+📊 统计:
+   - 新增文件: 3个
+   - 修改文件: 2个
+   - 代码行数: +186行
+   - 测试覆盖: 待审查'''
         ],
         'reviewer': [
-            '🔍 正在审查代码...',
-            '📂 审查文件: src/models/user.py',
-            '⚠️ 建议优化: user.py 第23行可以使用缓存',
-            '⚠️ 建议优化: auth.py 缺少错误处理',
-            '✅ 审查通过，代码质量良好'
+            '''🔍 正在审查代码...
+
+审查范围:
+   - src/models/user.py
+   - src/utils/auth.py
+   - src/main.py''',
+            '''📂 审查文件: src/models/user.py
+
+代码审查报告:
+
+✅ 优点:
+   - 使用ORM良好实践
+   - to_dict方法设计合理
+
+⚠️ 建议:
+   - 第15行: 建议添加 email 唯一性验证
+   - 第20行: password_hash 长度可以增加到 512''',
+            '''📂 审查文件: src/utils/auth.py
+
+代码审查报告:
+
+✅ 优点:
+   - 使用 secrets 模块生成盐值
+   - PBKDF2 迭代次数足够
+
+⚠️ 建议:
+   - 第8行: 可以添加密码强度验证
+   - 建议添加账户锁定机制''',
+            '''⚠️ 发现的问题汇总:
+
+   1. src/models/user.py:15
+      问题: email 字段缺少唯一性约束
+      建议: 添加 unique=True
+
+   2. src/utils/auth.py:20
+      问题: 缺少登录失败次数限制
+      建议: 添加账户锁定机制
+
+   3. src/main.py:25
+      问题: 错误处理不够完善
+      建议: 添加具体的错误码''',
+            '''✅ 审查完成，代码质量评分: 85/100
+
+主要优点:
+   - 架构清晰，模块化良好
+   - 安全实践符合标准
+   - 代码可读性高
+
+待优化:
+   - 3处小问题需要修复'''
         ],
         'tester': [
-            '🧪 正在编写测试用例...',
-            '📝 创建文件: tests/test_user.py',
-            '📝 创建文件: tests/test_auth.py',
-            '🔄 运行单元测试中...',
-            '✅ 12个测试用例全部通过'
+            '''🧪 正在编写测试用例...
+
+测试计划:
+   - 单元测试: 15个
+   - 集成测试: 5个
+   - 端到端测试: 3个''',
+            '''📝 创建文件: tests/test_user.py
+
+📄 文件: tests/test_user.py
+```python
+import pytest
+from models.user import User
+
+class TestUserModel:
+    def test_create_user(self):
+        user = User(username='test', email='test@test.com')
+        assert user.id is not None
+
+    def test_password_hashing(self):
+        from utils.auth import hash_password
+        hash = hash_password('test123')
+        assert len(hash) == 64
+```''',
+            '''📝 创建文件: tests/test_auth.py
+
+📄 文件: tests/test_auth.py
+```python
+import pytest
+from auth import login, verify_token
+
+class TestAuth:
+    def test_login_success(self):
+        result = login('admin', 'password123')
+        assert 'token' in result
+
+    def test_login_failure(self):
+        with pytest.raises(AuthError):
+            login('admin', 'wrong')
+```''',
+            '''🔄 运行测试中...
+
+正在执行: pytest tests/ -v
+
+✅ test_user.py::TestUserModel::test_create_user PASSED
+✅ test_user.py::TestUserModel::test_password_hashing PASSED
+✅ test_auth.py::TestAuth::test_login_success PASSED
+✅ test_auth.py::TestAuth::test_login_failure PASSED''',
+            '''✅ 所有测试通过!
+
+📊 测试报告:
+   - 总测试数: 23个
+   - 通过: 23个 (100%)
+   - 失败: 0个
+   - 跳过: 0个
+
+⏱️ 总耗时: 1.2秒'''
         ],
         'builder': [
-            '🔧 正在配置构建环境...',
-            '📝 创建文件: Dockerfile',
-            '📝 创建文件: docker-compose.yml',
-            '🔨 执行构建命令: npm run build',
-            '✅ 构建成功，镜像大小: 245MB'
+            '''🔧 正在配置构建环境...
+
+构建配置:
+   - Docker镜像构建
+   - 多阶段构建优化
+   - 环境变量配置''',
+            '''📝 创建文件: Dockerfile
+
+📄 文件: Dockerfile
+```dockerfile
+FROM python:3.11-slim
+
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+
+COPY . .
+RUN pip install gunicorn
+
+EXPOSE 8080
+CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:8080", "app:app"]
+```''',
+            '''📝 创建文件: docker-compose.yml
+
+📄 文件: docker-compose.yml
+```yaml
+version: '3.8'
+services:
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - DATABASE_URL=postgresql://db:5432/app
+  db:
+    image: postgres:15
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+volumes:
+  pgdata:
+```''',
+            '''🔨 执行构建...
+
+$ docker build -t myapp:latest .
+
+Step 1/7 : FROM python:3.11-slim
+Step 2/7 : WORKDIR /app
+Step 3/7 : COPY requirements.txt .
+Step 4/7 : RUN pip install -r requirements.txt
+Step 5/7 : COPY . .
+Step 6/7 : RUN pip install gunicorn
+Step 7/7 : CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:8080", "app:app"]
+Successfully built abc123
+Successfully tagged myapp:latest''',
+            '''✅ 构建成功!
+
+📊 构建统计:
+   - 镜像名称: myapp:latest
+   - 镜像大小: 245MB
+   - 构建时间: 45秒
+   - 层数: 7层
+
+🚀 可以使用以下命令启动:
+   docker-compose up -d'''
         ],
     }
 

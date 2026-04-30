@@ -499,6 +499,9 @@ function appendMessage(message) {
     const avatarColor = isUser ? 'var(--agent-user)' : getAgentColor(message.agent);
     const avatarIcon = message.agentIcon || (isUser ? '👤' : '🤖');
 
+    // 格式化消息内容：保留换行，处理代码块
+    const formattedContent = formatMessageContent(message.content);
+
     msgEl.innerHTML = `
         <div class="message-avatar" style="background: ${avatarColor}">${avatarIcon}</div>
         <div class="message-content">
@@ -506,7 +509,7 @@ function appendMessage(message) {
                 <span class="message-sender">${escapeHtml(message.agentName || (isUser ? '我' : message.agent))}</span>
                 <span class="message-time">${message.timestamp ? formatTime(message.timestamp) : ''}</span>
             </div>
-            <div class="message-bubble">${escapeHtml(message.content)}</div>
+            <div class="message-bubble">${formattedContent}</div>
             ${message.progress !== undefined ? `
                 <div class="message-progress">
                     <div class="message-progress-bar">
@@ -520,6 +523,35 @@ function appendMessage(message) {
 
     elements.messageContainer.appendChild(msgEl);
     scrollToBottom();
+}
+
+// 格式化消息内容：支持代码块和换行
+function formatMessageContent(content) {
+    if (!content) return '';
+
+    // 转义HTML
+    let escaped = escapeHtml(content);
+
+    // 处理代码块 ```code```
+    escaped = escaped.replace(/```([\s\S]*?)```/g, (match, code) => {
+        return `<pre class="code-block"><code>${code.trim()}</code></pre>`;
+    });
+
+    // 处理内联代码 `code`
+    escaped = escaped.replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>');
+
+    // 保留换行
+    escaped = escaped.replace(/\n/g, '<br>');
+
+    // 格式化列表项
+    escaped = escaped.replace(/^   • (.+)$/gm, '<span class="list-item">• $1</span>');
+    escaped = escaped.replace(/^   - (.+)$/gm, '<span class="list-item">- $1</span>');
+
+    // 格式化进度条字符
+    escaped = escaped.replace(/█/g, '<span class="progress-bar-char">█</span>');
+    escaped = escaped.replace(/░/g, '<span class="progress-bar-empty">░</span>');
+
+    return escaped;
 }
 
 // ===================================

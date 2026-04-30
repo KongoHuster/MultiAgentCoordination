@@ -791,6 +791,77 @@ body {
     padding: 0;
 }
 
+/* 增强的消息内容样式 */
+.message-bubble .code-block {
+    background: #1e1e1e;
+    color: #d4d4d4;
+    padding: 12px;
+    border-radius: var(--radius-md);
+    margin: 10px 0;
+    overflow-x: auto;
+    font-family: 'Fira Code', 'Consolas', monospace;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.message-bubble .code-block code {
+    color: #d4d4d4;
+}
+
+/* 内联代码 */
+.message-bubble .inline-code {
+    background: rgba(0, 0, 0, 0.1);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: 'Fira Code', 'Consolas', monospace;
+    font-size: 13px;
+    color: #e83e8c;
+}
+
+.message.user .message-bubble .inline-code {
+    background: rgba(255, 255, 255, 0.2);
+    color: #ffd4e5;
+}
+
+/* 列表项 */
+.message-bubble .list-item {
+    display: block;
+    padding-left: 1em;
+    color: var(--text-secondary);
+}
+
+/* 进度条字符 */
+.message-bubble .progress-bar-char {
+    color: var(--success-color);
+    font-weight: bold;
+}
+
+.message-bubble .progress-bar-empty {
+    color: var(--text-muted);
+}
+
+/* 长消息气泡自适应高度 */
+.message-bubble {
+    max-width: 100%;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+/* 消息气泡内滚动条样式 */
+.message-bubble::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+.message-bubble::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.message-bubble::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 3px;
+}
+
 /* 状态徽章 */
 .status-badge {
     display: inline-flex;
