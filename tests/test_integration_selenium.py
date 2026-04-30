@@ -384,19 +384,28 @@ class TestSeleniumIntegration:
         time.sleep(1)
 
         # 创建带Agent的项目
-        create_project_via_api("状态显示测试", ['orchestrator', 'coder', 'reviewer', 'tester'])
+        project_name = "Agent详情测试" + str(int(time.time()))
+        create_project_via_api(project_name, ['orchestrator', 'coder', 'reviewer', 'tester'])
         browser.refresh()
         time.sleep(1)
 
-        # 点击项目
-        project_item = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, ".project-item")))
-        project_item.click()
+        # 点击刚创建的项目（按名称查找）
+        project_items = browser.find_elements(By.CSS_SELECTOR, ".project-item")
+        target_item = None
+        for item in project_items:
+            name_elem = item.find_element(By.CSS_SELECTOR, ".project-name")
+            if project_name in name_elem.text:
+                target_item = item
+                break
+
+        assert target_item is not None, f"找不到项目: {project_name}"
+        target_item.click()
         time.sleep(0.5)
 
         # 检查Agent卡片
         agent_cards = browser.find_elements(By.CSS_SELECTOR, ".agent-status-card")
         print(f"Agent卡片数: {len(agent_cards)}")
-        assert len(agent_cards) >= 4, "Agent卡片数量不足"
+        assert len(agent_cards) >= 4, f"Agent卡片数量不足，期望>=4，实际{len(agent_cards)}"
         print("✅ Agent状态卡片正确显示")
 
         # 检查Agent头像
