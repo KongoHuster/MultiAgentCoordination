@@ -1,6 +1,9 @@
 # Generated code files
 output/
 
+# Generated projects (per-conversation git repos)
+backend/generated_projects/
+
 # Python
 __pycache__/
 *.py[cod]
@@ -8,3 +11,12 @@ __pycache__/
 
 # Environment
 .env
+
+# Database
+*.db
+*.sqlite
+
+# Frontend
+node_modules/
+dist/
+.venv/

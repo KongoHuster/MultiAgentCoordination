@@ -1,71 +1,109 @@
-# Multi-Agent Orchestration System
+# Agency Visual
 
-基于 Claude API 的多智能体编排系统，支持长时间运行和复杂任务处理。
+可视化多智能体协作平台，基于 msitarzewski/agency-agents 实现。
 
-## 架构
+## 功能特性
 
-```
-用户请求 → Orchestrator (任务分解) → Coder → Reviewer → Tester → Git提交
-                                         ↑         ↓
-                              主Agent判断 ← 失败重试 ← (最多3次)
-```
+- 🎨 **可视化界面**：实时展示 Agent 工作状态
+- 🔄 **多 Agent 协作**：Orchestrator、Coder、Reviewer、Tester 协同完成任务
+- 💬 **实时交互**：用户可随时加入对话补充信息
+- 📁 **对话即项目**：每个对话对应一个 Git 项目
+- 🤖 **多 LLM 支持**：Ollama、Anthropic、GLM、DeepSeek
 
-## 组件
-
-| Agent | 职责 |
-|-------|------|
-| Orchestrator | 任务分解、判断完成、调度 |
-| Coder | 编写代码 |
-| Reviewer | 代码审查 |
-| Tester | 测试执行 |
-
-## 目录结构
+## 项目结构
 
 ```
-multi_agent/
-├── main.py              # 入口
-├── config.py            # 配置
-├── workflow_engine.py   # 工作流引擎
-├── shared_memory.py     # 共享内存
-├── task_manager.py      # 任务管理
-├── message_queue.py     # 消息队列
-├── git_manager.py       # Git 操作
-├── agents/
-│   ├── base_agent.py
-│   ├── orchestrator.py
-│   ├── coder.py
-│   ├── reviewer.py
-│   └── tester.py
-└── output/              # 生成的代码
+agency-visual/
+├── backend/                 # Python FastAPI 后端
+│   ├── agents/             # Agent 实现
+│   ├── api/                # API 路由
+│   ├── core/               # 核心组件
+│   ├── db/                 # 数据库
+│   ├── git/                # Git 操作
+│   ├── llm/                # LLM 网关
+│   └── websocket/          # WebSocket 管理
+├── frontend/               # React + TypeScript 前端
+│   └── src/
+│       ├── components/     # UI 组件
+│       ├── hooks/          # 自定义 Hooks
+│       ├── services/       # API 客户端
+│       ├── stores/         # 状态管理
+│       └── types/          # 类型定义
+└── generated_projects/     # 生成的 Git 项目
 ```
 
-## 配置
+## 快速开始
+
+### 后端
 
 ```bash
-export ANTHROPIC_API_KEY="your-api-key"
-export ANTHROPIC_BASE_URL="https://milukey.cn"
+cd backend
+
+# 安装依赖
+pip install -r requirements.txt
+
+# 配置环境变量
+export DATABASE_URL=postgresql://postgres:postgres@localhost:5432/agency_visual
+export LLM_BACKEND=ollama
+export LLM_MODEL=gemma2:9b
+
+# 启动服务
+python main.py
 ```
 
-## 使用
+### 前端
 
 ```bash
-cd multi_agent
-python3 main.py "写一个计算器"
+cd frontend
+
+# 安装依赖
+npm install
+
+# 启动开发服务器
+npm run dev
 ```
 
-## 工作流程
+### Ollama (可选)
 
-1. **任务分解** - 主 Agent 分析并分解复杂任务
-2. **编码** - Coder Agent 编写代码
-3. **检视** - Reviewer Agent 审查代码
-4. **测试** - Tester Agent 运行测试
-5. **判断** - 主 Agent 根据测试结果判断是否完成
-6. **提交** - 成功后自动 Git 提交
+如果使用本地 Ollama 模型：
 
-## 特性
+```bash
+# ���装 Ollama
+curl -fsSL https://ollama.com/install.sh | sh
 
-- 自动任务分解
-- 编码→检视→测试循环
-- 失败自动重试（最多3次）
-- 成功自动 Git 提交
-- API 超时重试
+# 拉取模型
+ollama pull gemma2:9b
+
+# 启动 Ollama
+ollama serve
+```
+
+## API
+
+### 对话管理
+
+- `POST /api/conversations` - 创建对话
+- `GET /api/conversations` - 获取对话列表
+- `GET /api/conversations/{id}` - 获取对话详情
+- `DELETE /api/conversations/{id}` - 删除对话
+
+### Agent 控制
+
+- `POST /api/conversations/{id}/start` - 启动任务
+- `POST /api/conversations/{id}/pause` - 暂停
+- `POST /api/conversations/{id}/resume` - 恢复
+- `POST /api/conversations/{id}/stop` - 停止
+
+### Git 操作
+
+- `GET /api/conversations/{id}/git/status` - Git 状态
+- `GET /api/conversations/{id}/git/log` - 提交历史
+- `POST /api/conversations/{id}/git/commit` - 提交
+
+### WebSocket
+
+- `ws://localhost:8000/ws/{conversation_id}` - 实时事件
+
+## License
+
+MIT
